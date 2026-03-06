@@ -623,6 +623,29 @@ impl ConstraintEnforcer for MockConstraintEnforcer {
 }
 
 // ---------------------------------------------------------------------------
+// Shared test helpers
+// ---------------------------------------------------------------------------
+
+/// Create a default `StratumRun` for use in tests.
+///
+/// Returns a run in `Initialising` state with sensible defaults.
+pub fn make_test_run() -> StratumRun {
+    StratumRun {
+        id: uuid::Uuid::new_v4(),
+        parent_run_id: None,
+        model_ref: "test-model".to_string(),
+        trust_level: TrustLevel::Supervised,
+        tool_manifest: vec!["read_file".to_string()],
+        memory_config: MemoryConfig::default(),
+        hitl_policy: HitlPolicy::default(),
+        context_budget: ContextBudget::default(),
+        spawn_depth_limit: 2,
+        state: RunState::Initialising,
+        created_at: chrono::Utc::now(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Mock ArtefactValidator
 // ---------------------------------------------------------------------------
 

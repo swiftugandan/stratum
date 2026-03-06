@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
-use uuid::Uuid;
 
 use stratum_core::{HitlController, Notifier, SessionManager, TrajectoryStore};
 use stratum_types::*;
 
 use crate::error::AdapterError;
+use crate::util::{deserialize_enum, serialize_enum};
 
 /// SQL schema for the `hitl_gates` table and its indexes.
 pub const HITL_GATES_SCHEMA: &str = "
@@ -88,16 +88,13 @@ impl SqliteHitlController {
         event_type: EventType,
         payload: serde_json::Value,
     ) -> Result<(), AdapterError> {
-        let event = TrajectoryEvent {
-            event_id: Uuid::new_v4(),
+        let event = TrajectoryEvent::new(
             run_id,
-            parent_run_id: None,
-            timestamp: Utc::now(),
+            None,
             event_type,
-            stratum_layer: StratumLayer::HitlController,
+            StratumLayer::HitlController,
             payload,
-            token_cost: TokenCost::default(),
-        };
+        );
         self.trajectory.emit_event(event).await?;
         Ok(())
     }
@@ -119,6 +116,7 @@ impl HitlController for SqliteHitlController {
 
         tokio::task::spawn_blocking(move || {
             let alternatives = serde_json::to_string(&rec.alternatives)?;
+            let category_str = serialize_enum(&rec.gate_category)?;
             let now = Utc::now().to_rfc3339();
 
             let conn = conn.lock().unwrap();
@@ -129,7 +127,7 @@ impl HitlController for SqliteHitlController {
                 params![
                     rec.id,
                     rec.run_id.to_string(),
-                    rec.gate_category,
+                    category_str,
                     rec.action_attempted,
                     alternatives,
                     rec.context_summary,
@@ -151,7 +149,7 @@ impl HitlController for SqliteHitlController {
             EventType::GateOpened,
             serde_json::json!({
                 "gate_id": record.id,
-                "gate_category": record.gate_category,
+                "gate_category": record.gate_category.to_string(),
                 "action_attempted": record.action_attempted,
             }),
         )
@@ -255,18 +253,20 @@ impl HitlController for SqliteHitlController {
             while let Some(row) = rows.next()? {
                 let id: String = row.get(0)?;
                 let rid: String = row.get(1)?;
+                let cat_str: String = row.get(2)?;
                 let alts_json: String = row.get(4)?;
 
                 let run_id: RunId = rid
                     .parse()
                     .map_err(|e| AdapterError::InvalidState(format!("invalid run_id: {e}")))?;
+                let gate_category: GateCategory = deserialize_enum(&cat_str)?;
                 let alternatives: Vec<String> =
                     serde_json::from_str(&alts_json).map_err(AdapterError::Serialization)?;
 
                 records.push(HitlRecord {
                     id,
                     run_id,
-                    gate_category: row.get(2)?,
+                    gate_category,
                     action_attempted: row.get(3)?,
                     alternatives,
                     context_summary: row.get(5)?,

@@ -10,30 +10,15 @@ use stratum_adapters::session::SqliteSessionManager;
 use stratum_adapters::trajectory::SqliteTrajectoryStore;
 use stratum_adapters::AdapterError;
 use stratum_core::{HitlController, Notifier, SessionManager, TrajectoryStore};
+use stratum_test_utils::mocks::make_test_run;
 use stratum_types::*;
 use uuid::Uuid;
 
-fn make_run() -> StratumRun {
-    StratumRun {
-        id: Uuid::new_v4(),
-        parent_run_id: None,
-        model_ref: "test-model".to_string(),
-        trust_level: TrustLevel::Supervised,
-        tool_manifest: vec![],
-        memory_config: MemoryConfig::default(),
-        hitl_policy: HitlPolicy::default(),
-        context_budget: ContextBudget::default(),
-        spawn_depth_limit: 2,
-        state: RunState::Initialising,
-        created_at: Utc::now(),
-    }
-}
-
-fn make_gate(run_id: RunId, gate_id: &str, category: &str) -> HitlRecord {
+fn make_gate(run_id: RunId, gate_id: &str, category: GateCategory) -> HitlRecord {
     HitlRecord {
         id: gate_id.to_string(),
         run_id,
-        gate_category: category.to_string(),
+        gate_category: category,
         action_attempted: "test action".to_string(),
         alternatives: vec!["alt1".to_string()],
         context_summary: "test context".to_string(),
@@ -60,7 +45,7 @@ async fn setup() -> (
 
 /// Helper: create a run and transition it to Running (prerequisite for Paused).
 async fn create_running_run(session: &SqliteSessionManager) -> RunId {
-    let run = make_run();
+    let run = make_test_run();
     let id = run.id;
     session.create_run(run).await.unwrap();
     session
@@ -75,7 +60,7 @@ async fn test_open_gate_pauses_run() {
     let (ctrl, traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    let gate = make_gate(id, "gate-1", "destructive");
+    let gate = make_gate(id, "gate-1", GateCategory::Destructive);
     ctrl.open_gate(gate).await.unwrap();
 
     // Run should be Paused
@@ -96,7 +81,7 @@ async fn test_record_decision_approve_resumes() {
     let (ctrl, _traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-1", "destructive"))
+    ctrl.open_gate(make_gate(id, "gate-1", GateCategory::Destructive))
         .await
         .unwrap();
     assert_eq!(
@@ -117,7 +102,7 @@ async fn test_record_decision_modify_resumes() {
     let (ctrl, _traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-1", "ambiguity"))
+    ctrl.open_gate(make_gate(id, "gate-1", GateCategory::Ambiguity))
         .await
         .unwrap();
 
@@ -139,7 +124,7 @@ async fn test_record_decision_redirect() {
     let (ctrl, traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-1", "drift"))
+    ctrl.open_gate(make_gate(id, "gate-1", GateCategory::Drift))
         .await
         .unwrap();
 
@@ -172,7 +157,7 @@ async fn test_record_decision_abort() {
     let (ctrl, _traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-1", "destructive"))
+    ctrl.open_gate(make_gate(id, "gate-1", GateCategory::Destructive))
         .await
         .unwrap();
 
@@ -190,10 +175,10 @@ async fn test_pending_gates() {
     let id1 = create_running_run(&session).await;
     let id2 = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id1, "gate-a", "destructive"))
+    ctrl.open_gate(make_gate(id1, "gate-a", GateCategory::Destructive))
         .await
         .unwrap();
-    ctrl.open_gate(make_gate(id2, "gate-b", "irreversible"))
+    ctrl.open_gate(make_gate(id2, "gate-b", GateCategory::Irreversible))
         .await
         .unwrap();
 
@@ -215,7 +200,7 @@ async fn test_get_decision() {
     let (ctrl, _traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-1", "destructive"))
+    ctrl.open_gate(make_gate(id, "gate-1", GateCategory::Destructive))
         .await
         .unwrap();
 
@@ -262,7 +247,7 @@ async fn test_durable_pause() {
     }
 
     // Create a running run
-    let run = make_run();
+    let run = make_test_run();
     let id = run.id;
     session.create_run(run).await.unwrap();
     session
@@ -310,32 +295,28 @@ async fn test_policy_engine_categories() {
     let policy = HitlPolicy::default();
 
     assert_eq!(
-        GatePolicyEngine::evaluate("destructive", &policy),
+        GatePolicyEngine::evaluate(GateCategory::Destructive, &policy),
         GateAction::Block
     );
     assert_eq!(
-        GatePolicyEngine::evaluate("irreversible", &policy),
+        GatePolicyEngine::evaluate(GateCategory::Irreversible, &policy),
         GateAction::Block
     );
     assert_eq!(
-        GatePolicyEngine::evaluate("trust_escalation", &policy),
+        GatePolicyEngine::evaluate(GateCategory::TrustEscalation, &policy),
         GateAction::Block
     );
     assert_eq!(
-        GatePolicyEngine::evaluate("ambiguity", &policy),
+        GatePolicyEngine::evaluate(GateCategory::Ambiguity, &policy),
         GateAction::Block
     );
     assert_eq!(
-        GatePolicyEngine::evaluate("drift", &policy),
+        GatePolicyEngine::evaluate(GateCategory::Drift, &policy),
         GateAction::NotifyWithOption
     );
     assert_eq!(
-        GatePolicyEngine::evaluate("budget", &policy),
+        GatePolicyEngine::evaluate(GateCategory::Budget, &policy),
         GateAction::NotifyOnly
-    );
-    assert_eq!(
-        GatePolicyEngine::evaluate("unknown", &policy),
-        GateAction::Block
     );
 }
 
@@ -359,7 +340,7 @@ async fn test_webhook_notifier() {
     let record = HitlRecord {
         id: "gate-wh".to_string(),
         run_id: Uuid::new_v4(),
-        gate_category: "destructive".to_string(),
+        gate_category: GateCategory::Destructive,
         action_attempted: "rm -rf".to_string(),
         alternatives: vec!["trash".to_string()],
         context_summary: "dangerous op".to_string(),
@@ -375,7 +356,7 @@ async fn test_gate_decision_received_event() {
     let (ctrl, traj, session) = setup().await;
     let id = create_running_run(&session).await;
 
-    ctrl.open_gate(make_gate(id, "gate-evt", "destructive"))
+    ctrl.open_gate(make_gate(id, "gate-evt", GateCategory::Destructive))
         .await
         .unwrap();
     ctrl.record_decision(id, HitlDecision::Approve)

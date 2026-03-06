@@ -80,7 +80,7 @@ mod tests {
         HitlRecord {
             id: "gate-1".to_string(),
             run_id: Uuid::new_v4(),
-            gate_category: "destructive".to_string(),
+            gate_category: stratum_types::GateCategory::Destructive,
             action_attempted: "rm -rf /".to_string(),
             alternatives: vec!["trash".to_string()],
             context_summary: "User requested deletion".to_string(),

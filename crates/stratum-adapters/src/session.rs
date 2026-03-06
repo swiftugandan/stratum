@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
-use uuid::Uuid;
 
 use stratum_core::{SessionManager, TrajectoryStore};
 use stratum_types::*;
@@ -134,16 +133,13 @@ impl SqliteSessionManager {
         event_type: EventType,
         payload: serde_json::Value,
     ) -> Result<(), AdapterError> {
-        let event = TrajectoryEvent {
-            event_id: Uuid::new_v4(),
+        let event = TrajectoryEvent::new(
             run_id,
             parent_run_id,
-            timestamp: Utc::now(),
             event_type,
-            stratum_layer: StratumLayer::SessionLifecycle,
+            StratumLayer::SessionLifecycle,
             payload,
-            token_cost: TokenCost::default(),
-        };
+        );
         self.trajectory.emit_event(event).await?;
         Ok(())
     }
@@ -562,22 +558,8 @@ mod tests {
     use super::*;
     use crate::trajectory::SqliteTrajectoryStore;
     use stratum_core::TrajectoryStore;
-
-    fn make_run() -> StratumRun {
-        StratumRun {
-            id: Uuid::new_v4(),
-            parent_run_id: None,
-            model_ref: "claude-sonnet-4-20250514".to_string(),
-            trust_level: TrustLevel::Supervised,
-            tool_manifest: vec!["read_file".to_string(), "write_file".to_string()],
-            memory_config: MemoryConfig::default(),
-            hitl_policy: HitlPolicy::default(),
-            context_budget: ContextBudget::default(),
-            spawn_depth_limit: 2,
-            state: RunState::Initialising,
-            created_at: Utc::now(),
-        }
-    }
+    use stratum_test_utils::mocks::make_test_run;
+    use uuid::Uuid;
 
     fn make_checkpoint(run_id: RunId) -> Checkpoint {
         Checkpoint {
@@ -607,7 +589,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_and_get_run() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         let created = mgr.create_run(run.clone()).await.unwrap();
@@ -615,10 +597,10 @@ mod tests {
 
         let loaded = mgr.get_run(id).await.unwrap().unwrap();
         assert_eq!(loaded.id, id);
-        assert_eq!(loaded.model_ref, "claude-sonnet-4-20250514");
+        assert_eq!(loaded.model_ref, "test-model");
         assert_eq!(loaded.trust_level, TrustLevel::Supervised);
         assert_eq!(loaded.state, RunState::Initialising);
-        assert_eq!(loaded.tool_manifest, vec!["read_file", "write_file"]);
+        assert_eq!(loaded.tool_manifest, vec!["read_file"]);
     }
 
     #[tokio::test]
@@ -631,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn test_full_lifecycle() {
         let (mgr, traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         // Create
@@ -668,7 +650,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_state_transitions() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -698,7 +680,7 @@ mod tests {
     #[tokio::test]
     async fn test_checkpoint_roundtrip() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -721,7 +703,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_from_checkpoint() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -741,7 +723,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_invalid_state() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -754,7 +736,7 @@ mod tests {
     #[tokio::test]
     async fn test_pause_and_resume() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -774,7 +756,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_checkpoints_returns_latest() {
         let (mgr, _traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -810,7 +792,7 @@ mod tests {
     async fn test_parent_run_id_persisted() {
         let (mgr, _traj) = setup().await;
         let parent_id = Uuid::new_v4();
-        let mut run = make_run();
+        let mut run = make_test_run();
         run.parent_run_id = Some(parent_id);
         let id = run.id;
 
@@ -822,7 +804,7 @@ mod tests {
     #[tokio::test]
     async fn test_trajectory_events_emitted() {
         let (mgr, traj) = setup().await;
-        let run = make_run();
+        let run = make_test_run();
         let id = run.id;
 
         mgr.create_run(run).await.unwrap();
@@ -839,7 +821,7 @@ mod tests {
     async fn test_checkpoint_emits_event_with_parent_run_id() {
         let (mgr, traj) = setup().await;
         let parent_id = Uuid::new_v4();
-        let mut run = make_run();
+        let mut run = make_test_run();
         run.parent_run_id = Some(parent_id);
         let id = run.id;
 

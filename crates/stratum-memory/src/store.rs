@@ -114,16 +114,13 @@ impl<T: TrajectoryStore> DefaultMemoryStore<T> {
         event_type: EventType,
         payload: serde_json::Value,
     ) -> Result<(), MemoryError> {
-        let event = TrajectoryEvent {
-            event_id: Uuid::new_v4(),
-            run_id: Uuid::nil(), // Memory events are not always run-scoped
-            parent_run_id: None,
-            timestamp: Utc::now(),
+        let event = TrajectoryEvent::new(
+            Uuid::nil(), // Memory events are not always run-scoped
+            None,
             event_type,
-            stratum_layer: StratumLayer::MemoryHierarchy,
+            StratumLayer::MemoryHierarchy,
             payload,
-            token_cost: TokenCost::default(),
-        };
+        );
         self.trajectory
             .emit_event(event)
             .await

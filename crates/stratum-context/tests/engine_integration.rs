@@ -12,22 +12,6 @@ use stratum_test_utils::mocks::*;
 use stratum_types::*;
 use uuid::Uuid;
 
-fn make_run() -> StratumRun {
-    StratumRun {
-        id: Uuid::new_v4(),
-        parent_run_id: None,
-        model_ref: "claude-sonnet-4-20250514".to_string(),
-        trust_level: TrustLevel::Supervised,
-        tool_manifest: vec!["read_file".to_string()],
-        memory_config: MemoryConfig::default(),
-        hitl_policy: HitlPolicy::default(),
-        context_budget: ContextBudget::default(),
-        spawn_depth_limit: 2,
-        state: RunState::Running,
-        created_at: chrono::Utc::now(),
-    }
-}
-
 async fn setup() -> (
     DefaultContextEngine<MockSessionManager, MockTrajectoryStore, MockLlmClient>,
     RunId,
@@ -36,7 +20,10 @@ async fn setup() -> (
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 
@@ -159,7 +146,10 @@ async fn test_compaction_offload() {
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 
@@ -259,7 +249,10 @@ async fn test_hygiene_score_on_task() {
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 
@@ -297,7 +290,10 @@ async fn test_hygiene_score_off_task() {
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 
@@ -372,7 +368,10 @@ async fn test_reanchor_injected_after_consecutive_degradation() {
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 
@@ -428,7 +427,10 @@ async fn test_error_tool_results_protected_from_compaction() {
     let trajectory = Arc::new(MockTrajectoryStore::default());
     let llm = Arc::new(MockLlmClient::default());
 
-    let run = make_run();
+    let run = StratumRun {
+        state: RunState::Running,
+        ..make_test_run()
+    };
     let run_id = run.id;
     session.create_run(run).await.unwrap();
 

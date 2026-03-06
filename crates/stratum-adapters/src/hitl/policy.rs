@@ -1,6 +1,6 @@
 //! Gate policy engine — maps gate categories to actions based on `HitlPolicy`.
 
-use stratum_types::HitlPolicy;
+use stratum_types::{GateCategory, HitlPolicy};
 
 /// Action the harness should take for a given gate category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,32 +20,11 @@ pub enum GateAction {
 pub struct GatePolicyEngine;
 
 impl GatePolicyEngine {
-    /// Evaluate a gate category string against the given policy.
-    ///
-    /// Known categories: "destructive", "irreversible", "trust_escalation",
-    /// "ambiguity", "drift", "budget", "scheduled".
-    /// Unknown categories default to `Block` (safest).
-    pub fn evaluate(category: &str, policy: &HitlPolicy) -> GateAction {
+    /// Evaluate a gate category against the given policy.
+    pub fn evaluate(category: GateCategory, policy: &HitlPolicy) -> GateAction {
         use stratum_types::GatePolicy;
 
-        let gate_policy = match category {
-            "destructive" => policy.destructive,
-            "irreversible" => policy.irreversible,
-            "trust_escalation" => policy.trust_escalation,
-            "ambiguity" => policy.ambiguity,
-            "drift" => policy.drift,
-            "budget" => policy.budget,
-            "scheduled" => {
-                if policy.scheduled_interval.is_some() {
-                    GatePolicy::NotifyAndOption
-                } else {
-                    GatePolicy::Auto
-                }
-            }
-            _ => return GateAction::Block,
-        };
-
-        match gate_policy {
+        match policy.policy_for(category) {
             GatePolicy::AlwaysAsk => GateAction::Block,
             GatePolicy::NotifyAndOption => GateAction::NotifyWithOption,
             GatePolicy::Notify => GateAction::NotifyOnly,
@@ -63,7 +42,7 @@ mod tests {
     fn test_destructive_always_ask() {
         let policy = HitlPolicy::default();
         assert_eq!(
-            GatePolicyEngine::evaluate("destructive", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Destructive, &policy),
             GateAction::Block
         );
     }
@@ -72,7 +51,7 @@ mod tests {
     fn test_drift_notify_and_option() {
         let policy = HitlPolicy::default();
         assert_eq!(
-            GatePolicyEngine::evaluate("drift", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Drift, &policy),
             GateAction::NotifyWithOption
         );
     }
@@ -81,7 +60,7 @@ mod tests {
     fn test_budget_notify() {
         let policy = HitlPolicy::default();
         assert_eq!(
-            GatePolicyEngine::evaluate("budget", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Budget, &policy),
             GateAction::NotifyOnly
         );
     }
@@ -93,17 +72,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            GatePolicyEngine::evaluate("destructive", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Destructive, &policy),
             GateAction::AutoApprove
-        );
-    }
-
-    #[test]
-    fn test_unknown_category_defaults_to_block() {
-        let policy = HitlPolicy::default();
-        assert_eq!(
-            GatePolicyEngine::evaluate("unknown_category", &policy),
-            GateAction::Block
         );
     }
 
@@ -114,7 +84,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            GatePolicyEngine::evaluate("scheduled", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Scheduled, &policy),
             GateAction::NotifyWithOption
         );
     }
@@ -126,7 +96,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            GatePolicyEngine::evaluate("scheduled", &policy),
+            GatePolicyEngine::evaluate(GateCategory::Scheduled, &policy),
             GateAction::AutoApprove
         );
     }
@@ -134,17 +104,16 @@ mod tests {
     #[test]
     fn test_all_known_categories() {
         let policy = HitlPolicy::default();
-        // Just verify no panics and known categories return non-Block where expected
         for cat in &[
-            "destructive",
-            "irreversible",
-            "trust_escalation",
-            "ambiguity",
-            "drift",
-            "budget",
-            "scheduled",
+            GateCategory::Destructive,
+            GateCategory::Irreversible,
+            GateCategory::TrustEscalation,
+            GateCategory::Ambiguity,
+            GateCategory::Drift,
+            GateCategory::Budget,
+            GateCategory::Scheduled,
         ] {
-            let _ = GatePolicyEngine::evaluate(cat, &policy);
+            let _ = GatePolicyEngine::evaluate(*cat, &policy);
         }
     }
 }

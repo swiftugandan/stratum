@@ -7,9 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use stratum_core::{ContextEngine, LlmClient, SessionManager, TrajectoryStore};
 use stratum_types::*;
@@ -214,16 +212,13 @@ where
             states.get(&run_id).and_then(|s| s.parent_run_id)
         };
 
-        let event = TrajectoryEvent {
-            event_id: Uuid::new_v4(),
+        let event = TrajectoryEvent::new(
             run_id,
             parent_run_id,
-            timestamp: Utc::now(),
             event_type,
-            stratum_layer: StratumLayer::ContextEngine,
+            StratumLayer::ContextEngine,
             payload,
-            token_cost: TokenCost::default(),
-        };
+        );
         self.trajectory
             .emit_event(event)
             .await

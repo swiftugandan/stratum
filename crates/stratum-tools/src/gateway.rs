@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use tracing::{debug, warn};
-use uuid::Uuid;
 
 use stratum_core::{FrozenToolRegistry, ToolGateway, TrajectoryStore};
 use stratum_types::*;
@@ -56,16 +54,13 @@ impl<T: TrajectoryStore, E: ToolExecutor> DefaultToolGateway<T, E> {
         event_type: EventType,
         payload: serde_json::Value,
     ) -> Result<(), ToolError> {
-        let event = TrajectoryEvent {
-            event_id: Uuid::new_v4(),
+        let event = TrajectoryEvent::new(
             run_id,
-            parent_run_id: self.parent_run_id,
-            timestamp: Utc::now(),
+            self.parent_run_id,
             event_type,
-            stratum_layer: StratumLayer::ToolGateway,
+            StratumLayer::ToolGateway,
             payload,
-            token_cost: TokenCost::default(),
-        };
+        );
         self.trajectory
             .emit_event(event)
             .await
@@ -322,6 +317,7 @@ mod tests {
     use crate::registry::InMemoryToolRegistryBuilder;
     use stratum_core::ToolRegistryBuilder;
     use stratum_test_utils::mocks::MockTrajectoryStore;
+    use uuid::Uuid;
 
     fn tool_def(name: &str, trust: TrustLevel) -> ToolDefinition {
         ToolDefinition {

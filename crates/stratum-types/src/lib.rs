@@ -264,6 +264,28 @@ pub struct TrajectoryEvent {
     pub token_cost: TokenCost,
 }
 
+impl TrajectoryEvent {
+    /// Construct a new trajectory event with auto-generated ID, current timestamp, and zero token cost.
+    pub fn new(
+        run_id: RunId,
+        parent_run_id: Option<RunId>,
+        event_type: EventType,
+        stratum_layer: StratumLayer,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self {
+            event_id: Uuid::new_v4(),
+            run_id,
+            parent_run_id,
+            timestamp: Utc::now(),
+            event_type,
+            stratum_layer,
+            payload,
+            token_cost: TokenCost::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StratumLayer {
     SessionLifecycle,
@@ -398,6 +420,33 @@ pub struct MemorySearchResult {
 // HITL types
 // ---------------------------------------------------------------------------
 
+/// The 7 known gate categories for HITL gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateCategory {
+    Destructive,
+    Irreversible,
+    TrustEscalation,
+    Ambiguity,
+    Drift,
+    Budget,
+    Scheduled,
+}
+
+impl std::fmt::Display for GateCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Destructive => write!(f, "destructive"),
+            Self::Irreversible => write!(f, "irreversible"),
+            Self::TrustEscalation => write!(f, "trust_escalation"),
+            Self::Ambiguity => write!(f, "ambiguity"),
+            Self::Drift => write!(f, "drift"),
+            Self::Budget => write!(f, "budget"),
+            Self::Scheduled => write!(f, "scheduled"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HitlPolicy {
     pub destructive: GatePolicy,
@@ -431,6 +480,30 @@ pub enum GatePolicy {
     Auto,
 }
 
+impl HitlPolicy {
+    /// Look up the effective gate policy for a given category.
+    ///
+    /// `Scheduled` is special-cased: returns `NotifyAndOption` when an interval
+    /// is configured, otherwise `Auto`.
+    pub fn policy_for(&self, category: GateCategory) -> GatePolicy {
+        match category {
+            GateCategory::Destructive => self.destructive,
+            GateCategory::Irreversible => self.irreversible,
+            GateCategory::TrustEscalation => self.trust_escalation,
+            GateCategory::Ambiguity => self.ambiguity,
+            GateCategory::Drift => self.drift,
+            GateCategory::Budget => self.budget,
+            GateCategory::Scheduled => {
+                if self.scheduled_interval.is_some() {
+                    GatePolicy::NotifyAndOption
+                } else {
+                    GatePolicy::Auto
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HitlDecision {
     Approve,
@@ -443,7 +516,7 @@ pub enum HitlDecision {
 pub struct HitlRecord {
     pub id: String,
     pub run_id: RunId,
-    pub gate_category: String,
+    pub gate_category: GateCategory,
     pub action_attempted: String,
     pub alternatives: Vec<String>,
     pub context_summary: String,
@@ -690,5 +763,71 @@ mod tests {
         let cost = TokenCost::default();
         assert_eq!(cost.cached_tokens, 0);
         assert_eq!(cost.uncached_tokens, 0);
+    }
+
+    #[test]
+    fn test_trajectory_event_new_sets_defaults() {
+        let run_id = Uuid::new_v4();
+        let parent = Some(Uuid::new_v4());
+        let payload = serde_json::json!({"key": "value"});
+        let event = TrajectoryEvent::new(
+            run_id,
+            parent,
+            EventType::RunCreated,
+            StratumLayer::SessionLifecycle,
+            payload.clone(),
+        );
+        assert_eq!(event.run_id, run_id);
+        assert_eq!(event.parent_run_id, parent);
+        assert_eq!(event.event_type, EventType::RunCreated);
+        assert_eq!(event.stratum_layer, StratumLayer::SessionLifecycle);
+        assert_eq!(event.payload, payload);
+        assert_eq!(event.token_cost.cached_tokens, 0);
+        assert_eq!(event.token_cost.uncached_tokens, 0);
+    }
+
+    #[test]
+    fn test_gate_category_display() {
+        assert_eq!(GateCategory::Destructive.to_string(), "destructive");
+        assert_eq!(
+            GateCategory::TrustEscalation.to_string(),
+            "trust_escalation"
+        );
+        assert_eq!(GateCategory::Scheduled.to_string(), "scheduled");
+    }
+
+    #[test]
+    fn test_policy_for_basic() {
+        let policy = HitlPolicy::default();
+        assert_eq!(
+            policy.policy_for(GateCategory::Destructive),
+            GatePolicy::AlwaysAsk
+        );
+        assert_eq!(
+            policy.policy_for(GateCategory::Drift),
+            GatePolicy::NotifyAndOption
+        );
+        assert_eq!(policy.policy_for(GateCategory::Budget), GatePolicy::Notify);
+    }
+
+    #[test]
+    fn test_policy_for_scheduled_with_interval() {
+        let policy = HitlPolicy {
+            scheduled_interval: Some(10),
+            ..Default::default()
+        };
+        assert_eq!(
+            policy.policy_for(GateCategory::Scheduled),
+            GatePolicy::NotifyAndOption
+        );
+    }
+
+    #[test]
+    fn test_policy_for_scheduled_without_interval() {
+        let policy = HitlPolicy {
+            scheduled_interval: None,
+            ..Default::default()
+        };
+        assert_eq!(policy.policy_for(GateCategory::Scheduled), GatePolicy::Auto);
     }
 }

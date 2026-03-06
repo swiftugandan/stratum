@@ -166,40 +166,24 @@ Decisions Summary:
 mod tests {
     use super::*;
     use chrono::Utc;
+    use stratum_test_utils::mocks::make_test_run;
     use stratum_types::*;
-    use uuid::Uuid;
-
-    fn make_run() -> StratumRun {
-        StratumRun {
-            id: Uuid::new_v4(),
-            parent_run_id: None,
-            model_ref: "claude-sonnet-4-20250514".to_string(),
-            trust_level: TrustLevel::Supervised,
-            tool_manifest: vec!["read_file".to_string(), "write_file".to_string()],
-            memory_config: MemoryConfig::default(),
-            hitl_policy: HitlPolicy::default(),
-            context_budget: ContextBudget::default(),
-            spawn_depth_limit: 2,
-            state: RunState::Initialising,
-            created_at: Utc::now(),
-        }
-    }
 
     #[test]
     fn test_initialiser_prompt_contains_goal() {
-        let run = make_run();
+        let run = make_test_run();
         let prompt = initialiser_prompt(&run, "Build a REST API");
         assert!(prompt.contains("Build a REST API"));
         assert!(prompt.contains("TASK.md"));
         assert!(prompt.contains("PROGRESS.md"));
         assert!(prompt.contains("DECISIONS.md"));
-        assert!(prompt.contains("claude-sonnet-4-20250514"));
-        assert!(prompt.contains("read_file, write_file"));
+        assert!(prompt.contains("test-model"));
+        assert!(prompt.contains("read_file"));
     }
 
     #[test]
     fn test_initialiser_prompt_includes_constraints() {
-        let run = make_run();
+        let run = make_test_run();
         let prompt = initialiser_prompt(&run, "Do something");
         assert!(prompt.contains("Supervised"));
         assert!(prompt.contains("Spawn Depth Limit: 2"));
@@ -207,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_worker_prompt_contains_artefacts() {
-        let run = make_run();
+        let run = make_test_run();
         let artefacts = RunArtefacts {
             task_md: "# Goal\nBuild a REST API".to_string(),
             progress_md: "- [ ] Set up project\n- [ ] Add endpoints".to_string(),
@@ -244,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_worker_prompt_empty_progress() {
-        let run = make_run();
+        let run = make_test_run();
         let artefacts = RunArtefacts {
             task_md: "# Goal".to_string(),
             progress_md: "Empty".to_string(),
