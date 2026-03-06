@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# test dependencies
+rstest = "0.25"
+assert_cmd = "2"
+predicates = "3"
+wiremock = "0.6"
+tokio-test = "0.4"
+stratum-test-utils = { path = "crates/test-utils" }

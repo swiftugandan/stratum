@@ -1,0 +1,18 @@
+[package]
+name = "stratum-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+stratum-core = { path = "../core" }
+serde.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+tokio-test.workspace = true
+wiremock.workspace = true
+stratum-test-utils.workspace = true
