@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo build                          # Build all crates
-cargo test                           # Run all tests (33 currently)
+cargo test                           # Run all tests (377 currently)
 cargo test -p stratum-adapters       # Test a single crate
 cargo test test_name                 # Run a single test by name
 cargo clippy --all-targets           # Lint (must pass clean)
@@ -71,7 +71,7 @@ Cross-cutting: **LlmClient**, **ArtefactValidator**, **ConstraintEnforcer**
 
 ## Current State
 
-Phases 1-12 complete: workspace structure, domain types, all port traits, mocks, SqliteTrajectoryStore, InMemoryMetrics, SqliteSessionManager, two-prompt pattern, LLM client adapters, Context Engine, Memory Hierarchy, Tool Gateway, Sub-Agent Orchestrator, HITL Controller, CLI + Integration Wiring, Observability Dashboard, Testing & Hardening (377 tests, clippy + fmt clean). Next up: Phase 13 (Documentation & Release).
+All 13 phases complete. Phases 1-12 delivered: workspace structure, domain types, all port traits, mocks, SqliteTrajectoryStore, InMemoryMetrics, SqliteSessionManager, two-prompt pattern, LLM client adapters, Context Engine, Memory Hierarchy, Tool Gateway, Sub-Agent Orchestrator, HITL Controller, CLI + Integration Wiring, Observability Dashboard, Testing & Hardening (377 tests, clippy + fmt clean). Phase 13 delivered: README.md, CLI reference, configuration guide, trajectory export guide, release build verified (v0.1.0).
 
 ## Ways of Working
 
