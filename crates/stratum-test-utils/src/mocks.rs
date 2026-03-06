@@ -645,6 +645,53 @@ pub fn make_test_run() -> StratumRun {
     }
 }
 
+/// Create a `TrajectoryEvent` for use in tests.
+pub fn make_test_event(run_id: RunId, event_type: EventType) -> TrajectoryEvent {
+    TrajectoryEvent {
+        event_id: uuid::Uuid::new_v4(),
+        run_id,
+        parent_run_id: None,
+        timestamp: chrono::Utc::now(),
+        event_type,
+        stratum_layer: StratumLayer::TrajectoryStore,
+        payload: serde_json::json!({"key": "value"}),
+        token_cost: TokenCost::default(),
+    }
+}
+
+/// Create a `Checkpoint` for use in tests.
+pub fn make_test_checkpoint(run_id: RunId, summary: &str) -> Checkpoint {
+    Checkpoint {
+        id: uuid::Uuid::new_v4(),
+        run_id,
+        state: RunState::Checkpointed,
+        task_manifest: TaskManifest {
+            goal: "Test task".to_string(),
+            acceptance_criteria: vec![],
+            progress: vec![],
+            decisions: vec![],
+            blockers: vec![],
+        },
+        context_summary: summary.to_string(),
+        tool_call_log: vec![],
+        sub_agent_tree: vec![],
+        created_at: chrono::Utc::now(),
+    }
+}
+
+/// Create an `HitlRecord` for use in tests.
+pub fn make_test_gate(run_id: RunId, gate_id: &str, category: GateCategory) -> HitlRecord {
+    HitlRecord {
+        id: gate_id.to_string(),
+        run_id,
+        gate_category: category,
+        action_attempted: "test action".to_string(),
+        alternatives: vec!["alt1".to_string()],
+        context_summary: "test context".to_string(),
+        decision: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mock ArtefactValidator
 // ---------------------------------------------------------------------------

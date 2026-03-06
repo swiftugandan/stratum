@@ -71,7 +71,7 @@ Cross-cutting: **LlmClient**, **ArtefactValidator**, **ConstraintEnforcer**
 
 ## Current State
 
-Phases 1-11 complete: workspace structure, domain types, all port traits, mocks, SqliteTrajectoryStore, InMemoryMetrics, SqliteSessionManager, two-prompt pattern, LLM client adapters, Context Engine, Memory Hierarchy, Tool Gateway, Sub-Agent Orchestrator, HITL Controller, CLI + Integration Wiring, Observability Dashboard. Next up: Phase 12 (Testing & Hardening).
+Phases 1-12 complete: workspace structure, domain types, all port traits, mocks, SqliteTrajectoryStore, InMemoryMetrics, SqliteSessionManager, two-prompt pattern, LLM client adapters, Context Engine, Memory Hierarchy, Tool Gateway, Sub-Agent Orchestrator, HITL Controller, CLI + Integration Wiring, Observability Dashboard, Testing & Hardening (377 tests, clippy + fmt clean). Next up: Phase 13 (Documentation & Release).
 
 ## Ways of Working
 

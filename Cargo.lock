@@ -2211,6 +2211,7 @@ dependencies = [
  "stratum-core",
  "stratum-test-utils",
  "stratum-types",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
