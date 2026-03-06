@@ -11,8 +11,14 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+rfbmq-core.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
 rstest.workspace = true
 stratum-test-utils.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile.workspace = true

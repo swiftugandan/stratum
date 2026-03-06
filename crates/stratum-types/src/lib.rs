@@ -496,7 +496,7 @@ pub struct SubAgentResult {
     pub artefacts: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DispatchOptions {
     pub priority: TaskPriority,
     pub tags: Vec<String>,
@@ -519,6 +519,12 @@ pub enum TaskPriority {
     High,
     Normal,
     Low,
+}
+
+impl Default for TaskPriority {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 // ---------------------------------------------------------------------------

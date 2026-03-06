@@ -302,6 +302,88 @@ impl Orchestrator for MockOrchestrator {
 }
 
 // ---------------------------------------------------------------------------
+// Mock TaskDispatch
+// ---------------------------------------------------------------------------
+
+pub struct MockTaskDispatch {
+    tasks: Mutex<std::collections::VecDeque<(String, String, DispatchOptions)>>,
+    claimed: Mutex<std::collections::HashMap<String, ClaimedTask>>,
+    completed: Mutex<std::collections::HashSet<String>>,
+}
+
+impl std::fmt::Debug for MockTaskDispatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockTaskDispatch").finish()
+    }
+}
+
+impl Default for MockTaskDispatch {
+    fn default() -> Self {
+        Self {
+            tasks: Mutex::new(std::collections::VecDeque::new()),
+            claimed: Mutex::new(std::collections::HashMap::new()),
+            completed: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl TaskDispatch for MockTaskDispatch {
+    type Error = MockError;
+
+    fn enqueue(&self, body: &str, opts: DispatchOptions) -> Result<String, Self::Error> {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.tasks
+            .lock()
+            .unwrap()
+            .push_back((id.clone(), body.to_string(), opts));
+        Ok(id)
+    }
+
+    fn list_ready(&self) -> Result<Vec<String>, Self::Error> {
+        let tasks = self.tasks.lock().unwrap();
+        let completed = self.completed.lock().unwrap();
+        Ok(tasks
+            .iter()
+            .filter(|(_, _, opts)| opts.depends_on.iter().all(|dep| completed.contains(dep)))
+            .map(|(id, _, _)| id.clone())
+            .collect())
+    }
+
+    fn dequeue(&self) -> Result<Option<ClaimedTask>, Self::Error> {
+        let mut tasks = self.tasks.lock().unwrap();
+        match tasks.pop_front() {
+            None => Ok(None),
+            Some((id, body, _opts)) => {
+                let task = ClaimedTask {
+                    id: id.clone(),
+                    body,
+                    reply_to: None,
+                };
+                self.claimed.lock().unwrap().insert(id, task.clone());
+                Ok(Some(task))
+            }
+        }
+    }
+
+    fn complete(&self, task: &ClaimedTask) -> Result<(), Self::Error> {
+        self.claimed.lock().unwrap().remove(&task.id);
+        self.completed.lock().unwrap().insert(task.id.clone());
+        Ok(())
+    }
+
+    fn fail(&self, task: &ClaimedTask) -> Result<(), Self::Error> {
+        self.claimed.lock().unwrap().remove(&task.id);
+        Ok(())
+    }
+
+    fn depth(&self) -> Result<i64, Self::Error> {
+        let tasks = self.tasks.lock().unwrap().len() as i64;
+        let claimed = self.claimed.lock().unwrap().len() as i64;
+        Ok(tasks + claimed)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Mock HitlController
 // ---------------------------------------------------------------------------
 
