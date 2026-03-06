@@ -103,6 +103,7 @@ impl ContextEngine for MockContextEngine {
             tool_results: vec![],
             history: String::new(),
             total_tokens: 100,
+            slot_tokens: SlotTokenCounts::default(),
         })
     }
 

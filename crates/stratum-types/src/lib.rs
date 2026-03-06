@@ -533,6 +533,18 @@ pub struct AssembledContext {
     pub tool_results: Vec<String>,
     pub history: String,
     pub total_tokens: u64,
+    /// Per-slot token counts, populated during assembly to avoid re-tokenisation.
+    pub slot_tokens: SlotTokenCounts,
+}
+
+/// Pre-computed token counts for each context slot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlotTokenCounts {
+    pub system_anchor: u64,
+    pub task_manifest: u64,
+    pub injected_knowledge: u64,
+    pub tool_results: u64,
+    pub history: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
