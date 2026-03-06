@@ -16,4 +16,10 @@ pub enum AdapterError {
 
     #[error("Invalid state: {0}")]
     InvalidState(String),
+
+    #[error("HTTP error: {0}")]
+    Http(String),
+
+    #[error("LLM API error (status {status}): {message}")]
+    LlmApi { status: u16, message: String },
 }

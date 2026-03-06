@@ -16,8 +16,11 @@ rusqlite = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+reqwest = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 rstest.workspace = true
 stratum-test-utils.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock.workspace = true

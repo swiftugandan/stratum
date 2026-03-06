@@ -583,10 +583,14 @@ pub struct LlmResponse {
     pub content: String,
     pub tool_calls: Vec<LlmToolCall>,
     pub usage: LlmUsage,
+    /// Why the model stopped: `end_turn`, `stop`, `max_tokens`, `tool_use`, `tool_calls`, etc.
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmToolCall {
+    /// Provider-assigned ID for this tool call (needed to send `tool_result` back).
+    pub id: Option<String>,
     pub tool_name: String,
     pub arguments: serde_json::Value,
 }

@@ -442,6 +442,7 @@ impl Default for MockLlmClient {
                     output_tokens: 10,
                     cached_tokens: 40,
                 },
+                stop_reason: Some("end_turn".to_string()),
             }]),
         }
     }
