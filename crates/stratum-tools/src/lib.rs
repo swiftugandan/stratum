@@ -10,6 +10,7 @@ pub mod executor;
 pub mod gateway;
 pub mod registry;
 mod retry;
+pub mod subprocess;
 
 // Re-export port traits from stratum-core.
 pub use stratum_core::{ConstraintEnforcer, FrozenToolRegistry, ToolGateway, ToolRegistryBuilder};
@@ -21,3 +22,4 @@ pub use error::ToolError;
 pub use executor::{NoOpExecutor, ToolExecutionError, ToolExecutor};
 pub use gateway::DefaultToolGateway;
 pub use registry::{InMemoryFrozenToolRegistry, InMemoryToolRegistryBuilder};
+pub use subprocess::{ParamPassing, SubprocessExecutor, SubprocessExecutorConfig, ToolCommandSpec};

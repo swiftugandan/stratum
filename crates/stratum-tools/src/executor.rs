@@ -22,7 +22,7 @@ impl std::error::Error for ToolExecutionError {}
 
 /// Internal trait for pluggable tool execution backends.
 ///
-/// TODO: Real implementations (subprocess, WASM, etc.) are deferred to later phases.
+/// See [`crate::subprocess::SubprocessExecutor`] for the subprocess implementation.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     async fn execute(
