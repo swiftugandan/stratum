@@ -1,9 +1,11 @@
+//! stratum-test-utils: Mock/stub implementations of all port traits for testing.
+
 use std::sync::Once;
+
+pub mod mocks;
 
 static INIT: Once = Once::new();
 
-/// Initialize shared test infrastructure (logging, etc.).
-/// Safe to call multiple times — only runs once.
 pub fn init_test_logging() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()

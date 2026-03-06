@@ -10,11 +10,33 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
+# domain
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# async
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
+
+# error handling
 anyhow = "1"
+thiserror = "2"
+
+# observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# internal crates
+stratum-types = { path = "crates/stratum-types" }
+stratum-core = { path = "crates/stratum-core" }
+stratum-context = { path = "crates/stratum-context" }
+stratum-memory = { path = "crates/stratum-memory" }
+stratum-tools = { path = "crates/stratum-tools" }
+stratum-orchestrator = { path = "crates/stratum-orchestrator" }
+stratum-adapters = { path = "crates/stratum-adapters" }
+stratum-test-utils = { path = "crates/stratum-test-utils" }
 
 # test dependencies
 rstest = "0.25"
@@ -22,4 +44,3 @@ assert_cmd = "2"
 predicates = "3"
 wiremock = "0.6"
 tokio-test = "0.4"
-stratum-test-utils = { path = "crates/test-utils" }

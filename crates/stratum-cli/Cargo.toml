@@ -1,14 +1,18 @@
 [package]
-name = "stratum-core"
+name = "stratum-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-serde.workspace = true
+stratum-types.workspace = true
+stratum-core.workspace = true
 anyhow.workspace = true
+tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true
 stratum-test-utils.workspace = true

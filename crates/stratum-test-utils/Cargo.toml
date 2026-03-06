@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+stratum-types.workspace = true
+stratum-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
