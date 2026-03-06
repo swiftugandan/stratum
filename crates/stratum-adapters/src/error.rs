@@ -22,4 +22,7 @@ pub enum AdapterError {
 
     #[error("LLM API error (status {status}): {message}")]
     LlmApi { status: u16, message: String },
+
+    #[error("Webhook error: {0}")]
+    Webhook(String),
 }
