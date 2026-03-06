@@ -1,35 +1,27 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use rusqlite::{params, Connection};
-use serde::Serialize;
 use stratum_core::TrajectoryStore;
 use stratum_types::{EventType, ExportFormat, RunId, TimeRange, TokenCost, TrajectoryEvent};
 
-use crate::error::TrajectoryStoreError;
-
-fn enum_to_string<T: Serialize>(val: T) -> Result<String, TrajectoryStoreError> {
-    let v = serde_json::to_value(val)?;
-    v.as_str().map(|s| s.to_string()).ok_or_else(|| {
-        TrajectoryStoreError::RowDeserialization("enum did not serialize to string".into())
-    })
-}
+use crate::error::AdapterError;
+use crate::util::{deserialize_enum, parse_utc, serialize_enum};
 
 pub struct SqliteTrajectoryStore {
     conn: Arc<Mutex<Connection>>,
 }
 
 impl SqliteTrajectoryStore {
-    pub fn new(path: &str) -> Result<Self, TrajectoryStoreError> {
+    pub fn new(path: &str) -> Result<Self, AdapterError> {
         Self::from_connection(Connection::open(path)?)
     }
 
-    pub fn in_memory() -> Result<Self, TrajectoryStoreError> {
+    pub fn in_memory() -> Result<Self, AdapterError> {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    fn from_connection(conn: Connection) -> Result<Self, TrajectoryStoreError> {
+    fn from_connection(conn: Connection) -> Result<Self, AdapterError> {
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -37,7 +29,7 @@ impl SqliteTrajectoryStore {
         Ok(store)
     }
 
-    fn init_schema(&self) -> Result<(), TrajectoryStoreError> {
+    fn init_schema(&self) -> Result<(), AdapterError> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(
@@ -80,7 +72,7 @@ type RawRow = (
     f64,
 );
 
-fn parse_row(row: RawRow) -> Result<TrajectoryEvent, TrajectoryStoreError> {
+fn parse_row(row: RawRow) -> Result<TrajectoryEvent, AdapterError> {
     let (
         event_id,
         run_id,
@@ -94,29 +86,23 @@ fn parse_row(row: RawRow) -> Result<TrajectoryEvent, TrajectoryStoreError> {
         estimated_cost_usd,
     ) = row;
 
-    let parse_err = |msg: String| TrajectoryStoreError::RowDeserialization(msg);
-
     Ok(TrajectoryEvent {
         event_id: event_id
             .parse()
-            .map_err(|e| parse_err(format!("event_id: {e}")))?,
+            .map_err(|e| AdapterError::InvalidState(format!("event_id: {e}")))?,
         run_id: run_id
             .parse()
-            .map_err(|e| parse_err(format!("run_id: {e}")))?,
+            .map_err(|e| AdapterError::InvalidState(format!("run_id: {e}")))?,
         parent_run_id: parent_run_id
             .map(|s| {
                 s.parse()
-                    .map_err(|e| parse_err(format!("parent_run_id: {e}")))
+                    .map_err(|e| AdapterError::InvalidState(format!("parent_run_id: {e}")))
             })
             .transpose()?,
-        timestamp: DateTime::parse_from_rfc3339(&timestamp)
-            .map_err(|e| parse_err(format!("timestamp: {e}")))?
-            .with_timezone(&chrono::Utc),
-        event_type: serde_json::from_value(serde_json::Value::String(event_type))
-            .map_err(|e| parse_err(format!("event_type: {e}")))?,
-        stratum_layer: serde_json::from_value(serde_json::Value::String(stratum_layer))
-            .map_err(|e| parse_err(format!("stratum_layer: {e}")))?,
-        payload: serde_json::from_str(&payload).map_err(|e| parse_err(format!("payload: {e}")))?,
+        timestamp: parse_utc(&timestamp)?,
+        event_type: deserialize_enum(&event_type)?,
+        stratum_layer: deserialize_enum(&stratum_layer)?,
+        payload: serde_json::from_str(&payload)?,
         token_cost: TokenCost {
             cached_tokens: cached_tokens as u64,
             uncached_tokens: uncached_tokens as u64,
@@ -127,7 +113,7 @@ fn parse_row(row: RawRow) -> Result<TrajectoryEvent, TrajectoryStoreError> {
 
 #[async_trait]
 impl TrajectoryStore for SqliteTrajectoryStore {
-    type Error = TrajectoryStoreError;
+    type Error = AdapterError;
 
     async fn emit_event(&self, event: TrajectoryEvent) -> Result<(), Self::Error> {
         let conn = Arc::clone(&self.conn);
@@ -136,8 +122,8 @@ impl TrajectoryStore for SqliteTrajectoryStore {
             let run_id = event.run_id.to_string();
             let parent_run_id = event.parent_run_id.map(|id| id.to_string());
             let timestamp = event.timestamp.to_rfc3339();
-            let event_type = enum_to_string(event.event_type)?;
-            let stratum_layer = enum_to_string(event.stratum_layer)?;
+            let event_type = serialize_enum(&event.event_type)?;
+            let stratum_layer = serialize_enum(&event.stratum_layer)?;
             let payload = serde_json::to_string(&event.payload)?;
 
             let conn = conn.lock().unwrap();
@@ -159,7 +145,7 @@ impl TrajectoryStore for SqliteTrajectoryStore {
                     event.token_cost.estimated_cost_usd,
                 ],
             )?;
-            Ok::<(), TrajectoryStoreError>(())
+            Ok::<(), AdapterError>(())
         })
         .await??;
         Ok(())
@@ -183,7 +169,7 @@ impl TrajectoryStore for SqliteTrajectoryStore {
             }
             if let Some(et) = &event_type {
                 where_clauses.push("event_type = ?");
-                param_values.push(Box::new(enum_to_string(et)?));
+                param_values.push(Box::new(serialize_enum(et)?));
             }
             if let Some(tr) = &time_range {
                 where_clauses.push("timestamp >= ?");
@@ -266,8 +252,8 @@ impl TrajectoryStore for SqliteTrajectoryStore {
                         .parent_run_id
                         .map(|id| id.to_string())
                         .unwrap_or_default();
-                    let event_type = enum_to_string(event.event_type)?;
-                    let stratum_layer = enum_to_string(event.stratum_layer)?;
+                    let event_type = serialize_enum(&event.event_type)?;
+                    let stratum_layer = serialize_enum(&event.stratum_layer)?;
                     let payload = serde_json::to_string(&event.payload)?;
                     // RFC 4180: double-quote fields containing commas, quotes, or newlines
                     let escaped_payload = format!("\"{}\"", payload.replace('"', "\"\""));

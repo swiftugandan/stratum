@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum TrajectoryStoreError {
+pub enum AdapterError {
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
@@ -11,6 +11,9 @@ pub enum TrajectoryStoreError {
     #[error("Task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
 
-    #[error("Failed to deserialize row data: {0}")]
-    RowDeserialization(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
 }
