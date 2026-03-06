@@ -9,4 +9,4 @@ pub mod ports;
 pub mod turn;
 
 pub use ports::*;
-pub use turn::TurnExecutor;
+pub use turn::{TurnExecutor, TurnOutcome};

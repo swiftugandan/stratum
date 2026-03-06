@@ -327,6 +327,9 @@ pub enum EventType {
     RunFailed,
     RunAborted,
 
+    // Core loop (TurnExecutor)
+    LlmCompleted,
+
     // Context (Stratum 2)
     CompactionStage1Triggered,
     CompactionStage2Triggered,

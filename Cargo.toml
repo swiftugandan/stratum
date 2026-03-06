@@ -21,6 +21,9 @@ serde_yaml = "0.9"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 
+# cli
+clap = { version = "4", features = ["derive"] }
+
 # http
 reqwest = { version = "0.12", features = ["json"] }
 rand = "0.8"
