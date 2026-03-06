@@ -47,6 +47,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Queue { action } => {
             commands::queue::execute(action, &config).await?;
         }
+        Commands::Metrics { run_id } => {
+            commands::metrics::execute(run_id.as_deref(), &config).await?;
+        }
+        Commands::Dashboard => {
+            commands::dashboard::execute(&config).await?;
+        }
+        Commands::Serve { port } => {
+            commands::serve::execute(*port, &config).await?;
+        }
     }
 
     Ok(())

@@ -46,6 +46,11 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# dashboard / metrics server
+axum = "0.8"
+ratatui = "0.29"
+crossterm = "0.28"
+
 # internal crates
 stratum-types = { path = "crates/stratum-types" }
 stratum-core = { path = "crates/stratum-core" }

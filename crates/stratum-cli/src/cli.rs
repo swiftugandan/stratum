@@ -57,6 +57,19 @@ pub enum Commands {
         #[command(subcommand)]
         action: QueueAction,
     },
+    /// Show current metrics (Prometheus format)
+    Metrics {
+        /// Optional run ID to show metrics for a specific run
+        run_id: Option<String>,
+    },
+    /// Live terminal dashboard showing metrics
+    Dashboard,
+    /// Start Prometheus metrics HTTP server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "9090")]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]

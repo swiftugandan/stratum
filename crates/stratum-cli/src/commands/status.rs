@@ -29,11 +29,7 @@ pub async fn execute(run_id: Option<&str>, config: &StratumConfig) -> anyhow::Re
             println!("Events: {}", events.len());
         }
         None => {
-            // List all runs — query trajectory for distinct run IDs
-            let events = ctx.trajectory.query_events(None, None, None, None).await?;
-            let mut run_ids: Vec<_> = events.iter().map(|e| e.run_id).collect();
-            run_ids.sort();
-            run_ids.dedup();
+            let run_ids = super::discover_run_ids(ctx.trajectory.as_ref()).await?;
 
             if run_ids.is_empty() {
                 println!("No runs found.");

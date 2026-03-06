@@ -17,7 +17,10 @@ fn cli_help_shows_all_subcommands() {
         .stdout(predicate::str::contains("export"))
         .stdout(predicate::str::contains("gates"))
         .stdout(predicate::str::contains("decide"))
-        .stdout(predicate::str::contains("queue"));
+        .stdout(predicate::str::contains("queue"))
+        .stdout(predicate::str::contains("metrics"))
+        .stdout(predicate::str::contains("dashboard"))
+        .stdout(predicate::str::contains("serve"));
 }
 
 #[test]
@@ -82,6 +85,19 @@ fn cli_trajectory_invalid_run_id_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid run ID"));
+}
+
+#[test]
+fn cli_metrics_works_without_api_key() {
+    let dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("stratum-cli")
+        .unwrap()
+        .arg("metrics")
+        .env_remove("STRATUM_API_KEY")
+        .env("STRATUM_DATA_DIR", dir.path().to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stratum_hitl_queue_depth"));
 }
 
 #[test]

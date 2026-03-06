@@ -35,6 +35,22 @@ impl std::fmt::Debug for InMemoryMetrics {
     }
 }
 
+impl InMemoryMetrics {
+    /// Query a gauge value directly, avoiding Prometheus text serialization.
+    pub fn get_gauge(&self, name: &str, labels: &[(&str, &str)]) -> Option<f64> {
+        let key = labels_key(labels);
+        let state = self.state.lock().unwrap();
+        state.gauges.get(name)?.get(&key).copied()
+    }
+
+    /// Query a counter value directly, avoiding Prometheus text serialization.
+    pub fn get_counter(&self, name: &str, labels: &[(&str, &str)]) -> Option<u64> {
+        let key = labels_key(labels);
+        let state = self.state.lock().unwrap();
+        state.counters.get(name)?.get(&key).copied()
+    }
+}
+
 fn labels_key(labels: &[(&str, &str)]) -> String {
     let mut sorted: Vec<_> = labels.to_vec();
     sorted.sort_by_key(|(k, _)| *k);
