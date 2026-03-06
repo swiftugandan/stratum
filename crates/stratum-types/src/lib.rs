@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub type RunId = Uuid;
 pub type ModelRef = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TrustLevel {
     Sandboxed,
     Supervised,
