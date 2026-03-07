@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo build                          # Build all crates
-cargo test                           # Run all tests (377 currently)
-cargo test -p stratum-adapters       # Test a single crate
+cargo test                           # Run all tests
+cargo test -p stratum-engine         # Test a single crate
 cargo test test_name                 # Run a single test by name
 cargo clippy --all-targets           # Lint (must pass clean)
 cargo fmt --check                    # Format check
@@ -16,71 +16,63 @@ cargo fmt                            # Auto-format
 
 ## Architecture
 
-Stratum is a model-agnostic agent harness with 7 independently swappable strata (layers), built in Rust using hexagonal (ports-and-adapters) architecture with Tokio async.
+Stratum is a model-agnostic autonomous agent harness built in Rust with Tokio async. Hexagonal (ports-and-adapters) architecture: types + traits in `stratum-core`, all implementations in `stratum-engine`, CLI binary in `stratum-cli`.
 
-### Workspace: 9 crates
+### Workspace: 3 crates
 
 | Crate | Role |
 |-------|------|
-| `stratum-types` | All shared domain types (RunId, StratumRun, EventType, etc.) |
-| `stratum-core` | **Pure port traits only** — no implementations. Defines boundaries for all 7 strata + TurnExecutor |
-| `stratum-context` | Stratum 2: Context Engine |
-| `stratum-memory` | Stratum 3: Memory Hierarchy |
-| `stratum-tools` | Stratum 4: Tool Gateway, built-in tools, persistent registry, composite executor |
-| `stratum-orchestrator` | Stratum 5: Sub-Agent Orchestrator + rfbmq |
-| `stratum-adapters` | Concrete implementations (SQLite stores, LLM clients, prompts). Houses Strata 1, 6, 7 impls |
-| `stratum-cli` | CLI binary |
-| `stratum-test-utils` | Mock implementations of all port traits |
+| `stratum-core` | Domain types + port traits (no implementations) |
+| `stratum-engine` | All implementations: session, memory, tools, LLM, orchestrator, trajectory, context, prompt, registry, dispatch |
+| `stratum-cli` | CLI binary (`stratum`) with 4 commands: `start`, `submit`, `stop`, `status` |
 
 ### Key architectural rules
 
-- **stratum-core is pure abstractions.** Never put implementations there — only trait definitions.
-- **Implementations go in stratum-adapters** (for cross-cutting concerns like SQLite, LLM) or in the stratum-specific crate.
+- **stratum-core is pure abstractions.** Types + trait definitions only, no implementations.
+- **All implementations go in stratum-engine.**
 - **EventType is a flat enum** (unit variants only). Event-specific data goes in `TrajectoryEvent::payload` as `serde_json::Value`.
-- **FrozenToolRegistry pattern**: `ToolRegistryBuilder` allows mutation during init; `FrozenToolRegistry` is immutable after. Protects KV-cache economics.
-- **PersistentToolRegistry**: SQLite-backed mutable registry for daemon mode; allows dynamic tool creation between turns.
-- **CompositeExecutor**: Routes tool calls to `BuiltinExecutor` (bash, file ops, memory, tool/skill creation) or `SubprocessExecutor` (external scripts).
-- **RunArtefacts**: Two-prompt pattern — Initialiser produces TASK.md, PROGRESS.md, DECISIONS.md; Worker executes.
-- **Daemon mode**: Persistent process watches rfbmq queue via `notify` (FSEvents/inotify), auto-runs tasks with built-in tools.
+- **2-tier memory**: Working (in-memory) + Persistent (SQLite + FTS5).
+- **Built-in tools**: bash, file ops (read/write/list/search), memory (write/search), create_tool, create_skill.
+- **Daemon mode**: `stratum start` watches rfbmq queue via `notify` (FSEvents/inotify), auto-runs tasks.
 - **All state transitions emit trajectory events.**
 
-### The 7 Strata (port traits in stratum-core/src/ports.rs)
+### Port traits (in `stratum-core/src/lib.rs::ports`)
 
-1. **SessionManager** — Run lifecycle, checkpointing, state transitions
-2. **ContextEngine** — Context assembly, budget checking, compaction
-3. **MemoryStore + SkillLoader** — Tiered memory (Working/Episodic/Project/Global)
-4. **ToolGateway + FrozenToolRegistry** — Single `call_tool()` entry point (no temporal coupling)
-5. **Orchestrator + TaskDispatch** — Sub-agent spawning, rfbmq integration
-6. **HitlController + Notifier** — Human-in-the-loop gates and decisions
-7. **TrajectoryStore + MetricsExporter** — Event capture and observability
-
-Cross-cutting: **LlmClient**, **ArtefactValidator**, **ConstraintEnforcer**
+- **SessionManager** — Run lifecycle, checkpointing, state transitions
+- **MemoryStore** — 2-tier memory (Working/Persistent)
+- **ToolGateway** — Single `call_tool()` entry point
+- **Orchestrator** — Sub-agent spawning
+- **TaskDispatch** — rfbmq queue operations (sync trait)
+- **TrajectoryStore** — Event capture
+- **LlmClient** — LLM completion
+- **TurnExecutor** — Core loop (context → LLM → tools → checkpoint)
 
 ### Key files
 
-- `crates/stratum-types/src/lib.rs` — All domain types
-- `crates/stratum-core/src/ports.rs` — All port traits
-- `crates/stratum-core/src/turn.rs` — TurnExecutor trait (orchestrates a single agent turn)
-- `crates/stratum-adapters/src/session.rs` — SqliteSessionManager (state machine with validated transitions)
-- `crates/stratum-adapters/src/trajectory.rs` — SqliteTrajectoryStore
-- `crates/stratum-adapters/src/prompt.rs` — Initialiser/Worker/Daemon prompt templates
-- `crates/stratum-tools/src/builtin/` — Built-in tool implementations (bash, file ops, memory, tool/skill creation)
-- `crates/stratum-tools/src/persistent_registry.rs` — PersistentToolRegistry (SQLite-backed, dynamic tools)
-- `crates/stratum-tools/src/composite.rs` — CompositeExecutor (routes builtin vs subprocess)
-- `crates/stratum-cli/src/daemon.rs` — DaemonLoop (rfbmq watcher, concurrent task runner)
-- `crates/stratum-cli/src/commands/daemon.rs` — `stratum daemon` command
-- `crates/stratum-cli/src/commands/submit.rs` — `stratum submit` command
-- `crates/stratum-test-utils/src/mocks.rs` — All mock implementations
+- `crates/stratum-core/src/lib.rs` — All domain types + port traits
+- `crates/stratum-engine/src/session.rs` — SqliteSessionManager
+- `crates/stratum-engine/src/trajectory.rs` — SqliteTrajectoryStore
+- `crates/stratum-engine/src/memory.rs` — DefaultMemoryStore (Working + SQLite/FTS5)
+- `crates/stratum-engine/src/gateway.rs` — DefaultToolGateway (validate → execute → log)
+- `crates/stratum-engine/src/registry.rs` — ToolRegistryBuilder + FrozenToolRegistry
+- `crates/stratum-engine/src/llm.rs` — AnthropicClient
+- `crates/stratum-engine/src/context.rs` — Context assembly
+- `crates/stratum-engine/src/prompt.rs` — System prompt templates
+- `crates/stratum-engine/src/orchestrator.rs` — DefaultOrchestrator (sub-agent spawning)
+- `crates/stratum-engine/src/dispatch.rs` — RfbmqDispatch (rfbmq queue adapter)
+- `crates/stratum-engine/src/executor.rs` — BuiltinExecutor + SubprocessExecutor
+- `crates/stratum-engine/src/tools/` — Built-in tool implementations (bash, file_ops, memory, create_tool, create_skill)
+- `crates/stratum-engine/src/error.rs` — EngineError
+- `crates/stratum-cli/src/cli.rs` — Clap CLI definition (4 commands)
+- `crates/stratum-cli/src/config.rs` — StratumConfig (YAML + env)
+- `crates/stratum-cli/src/wiring.rs` — AppContext construction
+- `crates/stratum-cli/src/turn_executor.rs` — DefaultTurnExecutor
+- `crates/stratum-cli/src/run_loop.rs` — Run loop (turn executor until complete)
+- `crates/stratum-cli/src/daemon.rs` — DaemonLoop (rfbmq watcher, concurrent tasks)
 
 ## Documentation
 
 - **PRD (read-only, never modify):** `docs/stratum-prd-v2.1.md`
-- **Architecture:** `docs/stratum-sad-v3.0.md`
-- **Implementation plan:** `docs/stratum-plan-v3.0.md` (13 phases, ~50 days)
-
-## Current State
-
-All 13 phases complete (v0.1.0). Post-v0.1.0 work adds: daemon mode (`stratum daemon` / `stratum submit`), built-in tools (bash, file ops, memory, tool/skill creation), PersistentToolRegistry (SQLite-backed dynamic tools), CompositeExecutor (builtin + subprocess routing), auto-approve global memory promotions for daemon mode, and daemon-specific system prompt.
 
 ## Ways of Working
 

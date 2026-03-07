@@ -1,7 +1,4 @@
-//! Core daemon implementation.
-//!
-//! Watches the rfbmq `pending/` directory via the `notify` crate (FSEvents on macOS,
-//! inotify on Linux). On file creation, dequeues tasks and spawns runs.
+//! DaemonLoop: watches rfbmq queue, dequeues tasks, runs agent loops concurrently.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,68 +6,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use stratum_core::TaskDispatch;
-use stratum_orchestrator::RfbmqDispatcher;
-use stratum_types::*;
+#[allow(unused_imports)]
+use stratum_core::ports::TaskDispatch;
+use stratum_core::*;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::config::StratumConfig;
+use crate::wiring::AppContext;
 
-/// Configuration for the daemon.
-#[derive(Debug, Clone)]
-pub struct DaemonConfig {
-    pub max_concurrent_runs: usize,
-    pub pid_file: PathBuf,
-    #[allow(dead_code)]
-    pub log_file: PathBuf,
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            max_concurrent_runs: 4,
-            pid_file: PathBuf::from(".stratum/daemon.pid"),
-            log_file: PathBuf::from(".stratum/daemon.log"),
-        }
-    }
-}
-
-/// The persistent daemon loop.
 pub struct DaemonLoop {
-    config: StratumConfig,
-    daemon_config: DaemonConfig,
-    dispatch: Arc<RfbmqDispatcher>,
+    ctx: Arc<AppContext>,
     active_runs: Arc<Mutex<HashMap<RunId, JoinHandle<()>>>>,
     shutdown: Arc<AtomicBool>,
 }
 
 impl DaemonLoop {
-    pub fn new(
-        config: StratumConfig,
-        daemon_config: DaemonConfig,
-        dispatch: Arc<RfbmqDispatcher>,
-    ) -> Self {
+    pub fn new(ctx: Arc<AppContext>) -> Self {
         Self {
-            config,
-            daemon_config,
-            dispatch,
+            ctx,
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Run the daemon. Blocks until shutdown signal received.
     pub async fn run(&self) -> anyhow::Result<()> {
-        // 1. Write PID file
         self.write_pid_file()?;
-        tracing::info!(
-            "daemon started, pid file: {}",
-            self.daemon_config.pid_file.display()
-        );
+        tracing::info!("daemon started (pid: {})", std::process::id());
         eprintln!("Stratum daemon started (pid: {})", std::process::id());
 
-        // 2. Set up signal handlers
+        // Signal handler
         let shutdown = self.shutdown.clone();
         tokio::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
@@ -79,17 +43,16 @@ impl DaemonLoop {
             shutdown.store(true, Ordering::SeqCst);
         });
 
-        // 3. Set up filesystem watcher
+        // Filesystem watcher on pending/
         let (tx, mut rx) = mpsc::channel::<()>(100);
-        let watch_path = self.config.orchestrator_config().queue_root.join("pending");
+        let watch_path = self.ctx.config.queue_root().join("pending");
         std::fs::create_dir_all(&watch_path)?;
+        let _watcher = self.setup_watcher(&watch_path, tx)?;
 
-        let _watcher = self.setup_watcher(&watch_path, tx.clone())?;
-
-        // 4. Drain any existing pending tasks
+        // Drain existing pending tasks
         self.drain_pending().await;
 
-        // 5. Event loop
+        // Event loop
         loop {
             if self.shutdown.load(Ordering::SeqCst) {
                 break;
@@ -100,17 +63,14 @@ impl DaemonLoop {
                     self.drain_pending().await;
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                    // Periodic check: clean up completed runs and check for tasks
                     self.cleanup_completed().await;
                     self.drain_pending().await;
                 }
             }
         }
 
-        // 6. Graceful shutdown
         self.graceful_shutdown().await;
         self.remove_pid_file();
-
         eprintln!("Daemon stopped.");
         Ok(())
     }
@@ -127,22 +87,20 @@ impl DaemonLoop {
                 }
             }
         })?;
-
         watcher.watch(watch_path, RecursiveMode::NonRecursive)?;
         tracing::info!("watching {}", watch_path.display());
         Ok(watcher)
     }
 
-    /// Dequeue and dispatch all pending tasks up to the concurrency limit.
     async fn drain_pending(&self) {
         loop {
             let active_count = self.active_runs.lock().await.len();
-            if active_count >= self.daemon_config.max_concurrent_runs {
-                tracing::debug!(active_count, "at concurrency limit, waiting");
+            if active_count >= self.ctx.config.max_concurrent_runs {
+                tracing::debug!(active_count, "at concurrency limit");
                 break;
             }
 
-            let task = match self.dispatch.dequeue() {
+            let task = match self.ctx.dispatch.dequeue() {
                 Ok(Some(task)) => task,
                 Ok(None) => break,
                 Err(e) => {
@@ -153,14 +111,15 @@ impl DaemonLoop {
 
             let run_id = uuid::Uuid::new_v4();
             tracing::info!(run_id = %run_id, task_id = %task.id, "dequeued task");
-            eprintln!("Task dequeued: {} → run {run_id}", task.id);
+            eprintln!("Task dequeued: {} -> run {run_id}", task.id);
 
-            let config = self.config.clone();
-            let dispatch = self.dispatch.clone();
+            let ctx = Arc::clone(&self.ctx);
+            let dispatch = Arc::clone(&self.ctx.dispatch);
             let active = self.active_runs.clone();
 
             let handle = tokio::spawn(async move {
-                match run_task(&config, &task).await {
+                let goal = parse_task_goal(&task.body);
+                match crate::run_loop::run_from_queue(&goal, &ctx).await {
                     Ok(()) => {
                         tracing::info!(task_id = %task.id, "task completed");
                         eprintln!("Task completed: {}", task.id);
@@ -170,7 +129,7 @@ impl DaemonLoop {
                     }
                     Err(e) => {
                         tracing::error!(task_id = %task.id, error = %e, "task failed");
-                        eprintln!("Task failed: {} — {e}", task.id);
+                        eprintln!("Task failed: {} -- {e}", task.id);
                         if let Err(e) = dispatch.fail(&task) {
                             tracing::error!(error = %e, "failed to mark task failed");
                         }
@@ -183,20 +142,18 @@ impl DaemonLoop {
         }
     }
 
-    /// Clean up completed run handles.
     async fn cleanup_completed(&self) {
         let mut active = self.active_runs.lock().await;
-        let done_ids: Vec<RunId> = active
+        let done: Vec<RunId> = active
             .iter()
             .filter(|(_, h)| h.is_finished())
             .map(|(&id, _)| id)
             .collect();
-        for id in done_ids {
+        for id in done {
             active.remove(&id);
         }
     }
 
-    /// Wait for active runs to complete (with timeout).
     async fn graceful_shutdown(&self) {
         let timeout = std::time::Duration::from_secs(60);
         let deadline = tokio::time::Instant::now() + timeout;
@@ -207,7 +164,7 @@ impl DaemonLoop {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
-                tracing::warn!(count, "shutdown timeout, {} runs still active", count);
+                tracing::warn!(count, "shutdown timeout, runs still active");
                 eprintln!("Warning: {count} runs still active after timeout");
                 break;
             }
@@ -217,40 +174,33 @@ impl DaemonLoop {
     }
 
     fn write_pid_file(&self) -> anyhow::Result<()> {
-        if let Some(parent) = self.daemon_config.pid_file.parent() {
+        let pid_file = self.ctx.config.pid_file();
+        if let Some(parent) = pid_file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let pid = std::process::id();
-        std::fs::write(&self.daemon_config.pid_file, pid.to_string())?;
+        std::fs::write(&pid_file, std::process::id().to_string())?;
         Ok(())
     }
 
     fn remove_pid_file(&self) {
-        let _ = std::fs::remove_file(&self.daemon_config.pid_file);
+        let _ = std::fs::remove_file(self.ctx.config.pid_file());
     }
 }
 
-/// Parse a task body JSON into a goal string.
 fn parse_task_goal(body: &str) -> String {
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(goal) = json.get("goal").and_then(|v| v.as_str()) {
             return goal.to_string();
         }
     }
-    // Fall back to using the body as the goal
     body.to_string()
 }
 
-/// Run a single task from the queue.
-async fn run_task(config: &StratumConfig, task: &ClaimedTask) -> anyhow::Result<()> {
-    let goal = parse_task_goal(&task.body);
-    tracing::info!(task_id = %task.id, goal = %goal, "running task");
-
-    // Build AppContext for this run, with auto_approve_global enabled for daemon mode
-    let ctx = crate::wiring::AppContext::build_daemon(config.clone())?;
-
-    // Run the task using the queue-specific entry point (daemon system prompt, no initialiser)
-    crate::run_loop::run_from_queue(&goal, &ctx).await
+/// Check if a daemon is currently running by reading the PID file.
+pub fn read_pid(pid_file: &PathBuf) -> Option<u32> {
+    std::fs::read_to_string(pid_file)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
 }
 
 #[cfg(test)]
@@ -267,34 +217,5 @@ mod tests {
     fn parse_task_goal_plain_text() {
         let body = "just a plain task";
         assert_eq!(parse_task_goal(body), "just a plain task");
-    }
-
-    #[test]
-    fn daemon_config_defaults() {
-        let cfg = DaemonConfig::default();
-        assert_eq!(cfg.max_concurrent_runs, 4);
-        assert!(cfg.pid_file.ends_with("daemon.pid"));
-    }
-
-    #[test]
-    fn pid_file_write_and_remove() {
-        let dir = tempfile::tempdir().unwrap();
-        let pid_file = dir.path().join("test.pid");
-        let daemon = DaemonLoop {
-            config: StratumConfig::default(),
-            daemon_config: DaemonConfig {
-                pid_file: pid_file.clone(),
-                ..Default::default()
-            },
-            dispatch: Arc::new(RfbmqDispatcher::init(dir.path().join("q").as_path(), 100).unwrap()),
-            active_runs: Arc::new(Mutex::new(HashMap::new())),
-            shutdown: Arc::new(AtomicBool::new(false)),
-        };
-        daemon.write_pid_file().unwrap();
-        assert!(pid_file.exists());
-        let content = std::fs::read_to_string(&pid_file).unwrap();
-        assert_eq!(content, std::process::id().to_string());
-        daemon.remove_pid_file();
-        assert!(!pid_file.exists());
     }
 }

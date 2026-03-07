@@ -1,198 +1,92 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+//! AppContext: concrete-typed wiring, no generics gymnastics.
 
-use stratum_adapters::{
-    InMemoryMetrics, SqliteHitlController, SqliteSessionManager, SqliteTrajectoryStore,
-    StdoutNotifier,
-};
-use stratum_context::DefaultContextEngine;
-use stratum_core::ToolRegistryBuilder;
-use stratum_memory::DefaultMemoryStore;
-use stratum_orchestrator::{DefaultOrchestrator, RfbmqDispatcher};
-use stratum_tools::{
-    BuiltinExecutor, CompositeExecutor, DefaultToolGateway, PersistentToolRegistry,
-    SubprocessExecutor,
-};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use stratum_engine::dispatch::RfbmqDispatcher;
+use stratum_engine::gateway::DefaultToolGateway;
+use stratum_engine::llm::AnthropicClient;
+use stratum_engine::memory::TwoTierMemoryStore;
+use stratum_engine::orchestrator::{DefaultOrchestrator, OrchestratorConfig};
+use stratum_engine::registry::PersistentToolRegistry;
+use stratum_engine::session::SqliteSessionManager;
+use stratum_engine::subprocess::{CompositeExecutor, SubprocessExecutor, SubprocessExecutorConfig};
+use stratum_engine::tools::BuiltinExecutor;
+use stratum_engine::trajectory::SqliteTrajectoryStore;
 
 use crate::config::StratumConfig;
-use crate::llm_adapter::LlmClientAdapter;
 
-/// Shared core services used by both `AppContext` and `QueryContext`.
-struct CoreServices {
-    trajectory: Arc<SqliteTrajectoryStore>,
-    session: Arc<SqliteSessionManager>,
-    hitl: Arc<SqliteHitlController>,
-}
-
-impl CoreServices {
-    fn build(config: &StratumConfig) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&config.data_dir)?;
-        let db_path = config.db_path();
-
-        let trajectory = Arc::new(SqliteTrajectoryStore::new(&db_path)?);
-        let session = Arc::new(SqliteSessionManager::new(
-            &db_path,
-            Arc::clone(&trajectory) as _,
-        )?);
-        let notifier = Arc::new(StdoutNotifier);
-        let hitl = Arc::new(SqliteHitlController::new(
-            &db_path,
-            Arc::clone(&trajectory) as _,
-            Arc::clone(&session) as _,
-            notifier as _,
-        )?);
-
-        Ok(Self {
-            trajectory,
-            session,
-            hitl,
-        })
-    }
-}
-
-/// Full wiring for run/resume commands requiring LLM access.
+/// Full application context with concrete types.
 pub struct AppContext {
-    pub trajectory: Arc<SqliteTrajectoryStore>,
-    pub session: Arc<SqliteSessionManager>,
-    pub llm: Arc<LlmClientAdapter>,
-    pub context_engine:
-        Arc<DefaultContextEngine<SqliteSessionManager, SqliteTrajectoryStore, LlmClientAdapter>>,
-    pub tool_registry: Arc<PersistentToolRegistry>,
-    pub tool_gateway: Arc<DefaultToolGateway<SqliteTrajectoryStore, CompositeExecutor>>,
-    #[allow(dead_code)]
-    pub hitl: Arc<SqliteHitlController>,
     pub config: StratumConfig,
+    pub session: Arc<SqliteSessionManager>,
     #[allow(dead_code)]
-    pub memory: Arc<DefaultMemoryStore<SqliteTrajectoryStore>>,
+    pub trajectory: Arc<SqliteTrajectoryStore>,
+    pub llm: Arc<AnthropicClient>,
+    pub memory: Arc<TwoTierMemoryStore>,
+    pub tool_registry: Arc<PersistentToolRegistry>,
+    pub tool_gateway: Arc<DefaultToolGateway<CompositeExecutor>>,
+    pub dispatch: Arc<RfbmqDispatcher>,
     #[allow(dead_code)]
-    orchestrator: Arc<DefaultOrchestrator<SqliteSessionManager, SqliteTrajectoryStore>>,
-    #[allow(dead_code)]
-    metrics: Arc<InMemoryMetrics>,
+    pub orchestrator: Arc<DefaultOrchestrator<SqliteSessionManager>>,
 }
 
 impl AppContext {
-    /// Build the full application context from config.
     pub fn build(config: StratumConfig) -> anyhow::Result<Self> {
-        Self::build_inner(config, false)
-    }
+        std::fs::create_dir_all(&config.data_dir)?;
+        let db_path = config.db_path();
 
-    /// Build the application context for daemon mode (auto-approves global memory promotions).
-    pub fn build_daemon(config: StratumConfig) -> anyhow::Result<Self> {
-        Self::build_inner(config, true)
-    }
-
-    fn build_inner(config: StratumConfig, auto_approve_global: bool) -> anyhow::Result<Self> {
-        let core = CoreServices::build(&config)?;
+        // Core stores
+        let trajectory = Arc::new(SqliteTrajectoryStore::new(&db_path)?);
+        let session = Arc::new(SqliteSessionManager::new(&db_path)?);
 
         // LLM client
-        let llm = Arc::new(LlmClientAdapter::from_config(&config));
+        let llm = Arc::new(AnthropicClient::new(config.api_key.clone()));
 
-        // Context engine
-        let context_engine = Arc::new(DefaultContextEngine::new(
-            config.context_engine_config(),
-            Arc::clone(&core.session),
-            Arc::clone(&core.trajectory),
-            Arc::clone(&llm),
-        ));
+        // Memory
+        let memory_db_path = config.data_dir.join("memory.db");
+        let memory = Arc::new(TwoTierMemoryStore::new(&memory_db_path.to_string_lossy())?);
 
-        // Memory store
-        let mut mem_config = config.memory_store_config();
-        mem_config.auto_approve_global = auto_approve_global;
-        let memory = Arc::new(DefaultMemoryStore::new(
-            mem_config,
-            Arc::clone(&core.trajectory),
-        )?);
-
-        // Persistent tool registry with built-in tools
+        // Tool registry
         let registry_db_path = config.data_dir.join("tools.db");
-        let registry_conn = Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(
-            &registry_db_path,
-        )?));
+        let registry_conn = Arc::new(Mutex::new(rusqlite::Connection::open(&registry_db_path)?));
         let tool_registry = Arc::new(PersistentToolRegistry::new(registry_conn)?);
+        tool_registry.register_builtins(stratum_engine::tools::all_builtin_definitions())?;
 
-        // Register built-in tool definitions
-        tool_registry.register_builtins(stratum_tools::builtin::all_builtin_definitions())?;
-
-        // Composite executor (builtin + subprocess)
+        // Composite executor
         let executor = Arc::new(CompositeExecutor::new(
             BuiltinExecutor,
-            SubprocessExecutor::new(config.subprocess_executor_config(), HashMap::new()),
+            SubprocessExecutor::new(SubprocessExecutorConfig::default(), HashMap::new()),
         ));
 
-        // Tool gateway (uses PersistentToolRegistry via the trait)
-        // Note: The gateway still needs an InMemoryFrozenToolRegistry for trait compatibility.
-        // We build one from the current persistent registry state.
-        let frozen_registry = build_frozen_from_persistent(&tool_registry)?;
+        // Tool gateway
         let tool_gateway = Arc::new(DefaultToolGateway::new(
-            config.tool_gateway_config(),
-            Arc::new(frozen_registry),
-            Arc::clone(&core.trajectory),
+            Default::default(),
+            Arc::clone(&tool_registry),
             executor,
-            config.trust_level,
-            None,
         ));
+
+        // Dispatch
+        let queue_root = config.queue_root();
+        std::fs::create_dir_all(&queue_root)?;
+        let dispatch = Arc::new(RfbmqDispatcher::init_or_open(&queue_root, 10000)?);
 
         // Orchestrator
         let orchestrator = Arc::new(DefaultOrchestrator::new(
-            config.orchestrator_config(),
-            Arc::clone(&core.session),
-            Arc::clone(&core.trajectory),
+            OrchestratorConfig::default(),
+            Arc::clone(&session),
         ));
 
-        // Metrics
-        let metrics = Arc::new(InMemoryMetrics::new());
-
         Ok(Self {
-            trajectory: core.trajectory,
-            session: core.session,
+            config,
+            session,
+            trajectory,
             llm,
-            context_engine,
             memory,
             tool_registry,
             tool_gateway,
-            orchestrator,
-            hitl: core.hitl,
-            metrics,
-            config,
-        })
-    }
-}
-
-/// Build an InMemoryFrozenToolRegistry from a PersistentToolRegistry's current state.
-fn build_frozen_from_persistent(
-    registry: &PersistentToolRegistry,
-) -> anyhow::Result<stratum_tools::InMemoryFrozenToolRegistry> {
-    let mut builder = stratum_tools::InMemoryToolRegistryBuilder::default();
-    for def in registry.get_manifest_owned() {
-        builder.register(def)?;
-    }
-    Ok(builder.build()?)
-}
-
-/// Lightweight context for read-only commands (no LLM client needed).
-pub struct QueryContext {
-    pub trajectory: Arc<SqliteTrajectoryStore>,
-    pub session: Arc<SqliteSessionManager>,
-    pub hitl: Arc<SqliteHitlController>,
-    pub dispatch: RfbmqDispatcher,
-}
-
-impl QueryContext {
-    /// Build a query context from config (no API key required).
-    pub fn build(config: &StratumConfig) -> anyhow::Result<Self> {
-        let core = CoreServices::build(config)?;
-
-        let orch_config = config.orchestrator_config();
-        let dispatch = RfbmqDispatcher::init_or_open(
-            &orch_config.queue_root,
-            orch_config.max_pending_per_queue,
-        )?;
-
-        Ok(Self {
-            trajectory: core.trajectory,
-            session: core.session,
-            hitl: core.hitl,
             dispatch,
+            orchestrator,
         })
     }
 }

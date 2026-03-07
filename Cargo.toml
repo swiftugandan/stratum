@@ -49,25 +49,6 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# dashboard / metrics server
-axum = "0.8"
-ratatui = "0.29"
-crossterm = "0.28"
-
-# internal crates
-stratum-types = { path = "crates/stratum-types" }
-stratum-core = { path = "crates/stratum-core" }
-stratum-context = { path = "crates/stratum-context" }
-stratum-memory = { path = "crates/stratum-memory" }
-stratum-tools = { path = "crates/stratum-tools" }
-stratum-orchestrator = { path = "crates/stratum-orchestrator" }
-stratum-adapters = { path = "crates/stratum-adapters" }
-stratum-test-utils = { path = "crates/stratum-test-utils" }
-
 # test dependencies
-rstest = "0.25"
-assert_cmd = "2"
-predicates = "3"
-wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3"
