@@ -1,29 +1,17 @@
 # Stratum
 
-A model-agnostic agent harness with 7 independently swappable strata, built in Rust.
+A model-agnostic autonomous agent harness built in Rust.
 
-Stratum uses hexagonal (ports-and-adapters) architecture to decouple every layer of an AI agent system — from session management to tool execution to human-in-the-loop gates. Swap any stratum without touching the others.
+## What is Stratum?
 
-## Features
-
-| Stratum | Layer | What It Does |
-|---------|-------|-------------|
-| 1 | **Session Manager** | Run lifecycle, checkpointing, state machine transitions |
-| 2 | **Context Engine** | 5-slot context assembly, budget checking, 3-stage compaction |
-| 3 | **Memory Hierarchy** | 4-tier memory (Working / Episodic / Project / Global) with FTS5 search |
-| 4 | **Tool Gateway** | Schema validation, trust enforcement, retry with backoff, built-in + dynamic tools |
-| 5 | **Sub-Agent Orchestrator** | Delegate / Pipeline / Parallel / Janitor spawn patterns via rfbmq |
-| 6 | **HITL Controller** | 7 gate categories, policy engine, webhook notifications |
-| 7 | **Trajectory Store** | Full event capture, Prometheus metrics, JSONL/CSV/Replay export |
-
-**Cross-cutting:** LLM client adapters (Anthropic, OpenAI Chat, OpenAI Responses), constraint enforcement, artefact validation, persistent daemon mode.
+Stratum manages the full agent runtime -- session lifecycle, context assembly, 2-tier memory, tool execution with schema validation and retry, sub-agent orchestration, and trajectory capture. It uses hexagonal (ports-and-adapters) architecture: pure abstractions in `stratum-core`, all implementations in `stratum-engine`, CLI binary in `stratum-cli`.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Rust 1.75+ (2021 edition)
-- An API key for your LLM provider
+- An Anthropic API key
 
 ### Install
 
@@ -40,16 +28,17 @@ The binary is at `target/release/stratum`.
 Set your API key:
 
 ```bash
-export STRATUM_API_KEY=sk-your-key-here
+export STRATUM_API_KEY=sk-ant-your-key-here
 ```
 
 Or create a `stratum.yaml` in your working directory:
 
 ```yaml
-llm_provider: anthropic
-api_key: sk-your-key-here
+api_key: sk-ant-your-key-here
 model: claude-sonnet-4-20250514
-trust_level: supervised
+max_tokens: 4096
+data_dir: .stratum
+max_concurrent_runs: 4
 ```
 
 See the [Configuration Guide](docs/configuration-guide.md) for all options.
@@ -57,99 +46,70 @@ See the [Configuration Guide](docs/configuration-guide.md) for all options.
 ### Run
 
 ```bash
-# Start an agent run
-stratum run "Implement a REST API for user management"
-
-# Check status
-stratum status
-
-# View trajectory events
-stratum trajectory <run_id>
-
-# Export for fine-tuning
-stratum export <run_id> --format jsonl > training.jsonl
-```
-
-### Daemon Mode
-
-Run Stratum as a persistent daemon that watches for tasks via rfbmq:
-
-```bash
-# Start the daemon (foreground)
-stratum daemon
+# Start the daemon (foreground, watches rfbmq queue)
+stratum start
 
 # Submit a task from another terminal
-stratum submit "Build a CLI calculator" --priority high --tags math,cli
+stratum submit "Build a hello world web server" --priority high --tag web
+
+# Check daemon status and queue depth
+stratum status
+
+# Stop the daemon
+stratum stop
 ```
-
-The daemon watches the rfbmq `pending/` directory (via filesystem events), dequeues tasks, and runs them autonomously with up to 4 concurrent runs. It uses a dedicated system prompt with built-in tools for bash, file operations, memory, tool creation, and skill creation.
-
-See the [CLI Reference](docs/cli-reference.md) for all 13 commands.
 
 ## Architecture
 
-Stratum follows hexagonal architecture. All port traits live in `stratum-core` (pure abstractions, no implementations). Concrete implementations live in their respective crates or in `stratum-adapters`.
-
-```
-                    +------------------+
-                    |   stratum-cli    |  CLI binary
-                    +--------+---------+
-                             |
-                    +--------+---------+
-                    |  TurnExecutor    |  Core loop
-                    +--------+---------+
-                             |
-     +-------+-------+------+------+-------+-------+
-     |       |       |      |      |       |       |
-   [S1]    [S2]    [S3]   [S4]   [S5]    [S6]    [S7]
-  Session Context Memory  Tool  Orch.   HITL   Trajectory
-  Manager Engine  Store  Gateway        Ctrl    Store
-     |       |       |      |      |       |       |
-     +-------+-------+------+------+-------+-------+
-                             |
-                    +--------+---------+
-                    | stratum-adapters |  SQLite, LLM, etc.
-                    +------------------+
-```
-
-For the full architecture, see the [System Architecture Document](docs/stratum-sad-v3.0.md).
-
-### Workspace (9 crates)
+### 3 Crates
 
 | Crate | Role |
 |-------|------|
-| `stratum-types` | All shared domain types (RunId, StratumRun, EventType, etc.) |
-| `stratum-core` | Pure port traits only — defines boundaries for all 7 strata + TurnExecutor |
-| `stratum-context` | Stratum 2: Context Engine |
-| `stratum-memory` | Stratum 3: Memory Hierarchy |
-| `stratum-tools` | Stratum 4: Tool Gateway, built-in tools, persistent registry |
-| `stratum-orchestrator` | Stratum 5: Sub-Agent Orchestrator + rfbmq |
-| `stratum-adapters` | Concrete implementations (SQLite, LLM clients, HITL, Trajectory) |
-| `stratum-cli` | CLI binary |
-| `stratum-test-utils` | Mock implementations of all port traits |
+| `stratum-core` | Domain types + port traits (no implementations) |
+| `stratum-engine` | All implementations: session, memory, tools, LLM, orchestrator, trajectory, context, prompt, registry, dispatch |
+| `stratum-cli` | CLI binary (`stratum`) with 4 commands: `start`, `submit`, `stop`, `status` |
+
+```
+stratum-cli  -->  stratum-engine  -->  stratum-core
+```
 
 ### Key Design Decisions
 
-- **EventType is a flat enum** — unit variants only; event data goes in `TrajectoryEvent::payload`
-- **FrozenToolRegistry + PersistentToolRegistry** — FrozenToolRegistry is immutable after init; PersistentToolRegistry (SQLite-backed) allows dynamic tool creation between turns
-- **Two-prompt pattern** — Initialiser produces TASK.md, PROGRESS.md, DECISIONS.md; Worker executes against them
-- **Daemon mode** — Persistent process watches rfbmq queue, auto-runs tasks with built-in tools and autonomous memory
-- **All state transitions emit trajectory events** — full observability by default
+- **Hexagonal architecture** -- Port traits in core, all implementations in engine
+- **EventType is a flat enum** -- Unit variants only; event-specific data goes in `TrajectoryEvent::payload`
+- **2-tier memory** -- Working (in-memory HashMap) + Persistent (SQLite/FTS5)
+- **PersistentToolRegistry** -- SQLite-backed, supports dynamic tool creation between turns
+- **`_builtin_action` marker pattern** -- Stateful tools return markers; the run loop processes them with access to application context
+- **Daemon mode** -- Persistent process watches rfbmq queue, auto-runs tasks with built-in tools
+- **All state transitions emit trajectory events** -- Full observability by default
+
+## Built-in Tools
+
+| Tool | Description |
+|------|-------------|
+| `bash` | Execute shell commands |
+| `read_file` | Read file contents |
+| `write_file` | Write/create files |
+| `list_directory` | List directory contents |
+| `search_files` | Search files by pattern |
+| `create_tool` | Register a new dynamic tool from a script |
+| `create_skill` | Create a skill definition file |
+| `memory_write` | Write to working or persistent memory |
+| `memory_search` | Search working or persistent memory |
 
 ## Documentation
 
-- [CLI Reference](docs/cli-reference.md) — All 13 commands with usage and examples
-- [Configuration Guide](docs/configuration-guide.md) — Config file, env vars, defaults
-- [Trajectory Export Guide](docs/trajectory-export-guide.md) — Export formats and fine-tuning integration
-- [System Architecture Document](docs/stratum-sad-v3.0.md) — Full architecture
-- [Product Requirements](docs/stratum-prd-v2.1.md) — PRD v2.1
-- [Implementation Plan](docs/stratum-plan-v3.0.md) — 13-phase plan
+- [CLI Reference](docs/cli-reference.md) -- All 4 commands with usage and examples
+- [Configuration Guide](docs/configuration-guide.md) -- Config file, env vars, defaults
+- [Trajectory Events Reference](docs/trajectory-events-reference.md) -- Event types, schema, and querying
+- [System Architecture Document](docs/stratum-sad-v4.0.md) -- Full architecture
+- [Product Requirements](docs/stratum-prd-v2.1.md) -- PRD v2.1 (read-only)
 
 ## Development
 
 ```bash
 cargo build                    # Build all crates
-cargo test                     # Run all tests (377)
+cargo test                     # Run all tests
 cargo clippy --all-targets     # Lint
 cargo fmt --check              # Format check
 ```
