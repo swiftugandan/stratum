@@ -70,6 +70,23 @@ pub enum Commands {
         #[arg(long, default_value = "9090")]
         port: u16,
     },
+    /// Start the persistent daemon (watches for tasks via rfbmq)
+    Daemon {
+        /// Run in foreground (default; daemon does not background itself)
+        #[arg(long, default_value_t = true)]
+        foreground: bool,
+    },
+    /// Submit a task for the daemon to execute
+    Submit {
+        /// The task goal
+        task: String,
+        /// Priority: critical, high, normal, low
+        #[arg(long, default_value = "normal")]
+        priority: String,
+        /// Tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]

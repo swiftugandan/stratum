@@ -34,6 +34,9 @@ tiktoken-rs = "0.9"
 # validation
 jsonschema = "0.29"
 
+# filesystem watcher
+notify = "6"
+
 # message queue
 rfbmq-core = { git = "https://github.com/swiftugandan/rfbmq", version = "0.1" }
 

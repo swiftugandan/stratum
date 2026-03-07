@@ -12,6 +12,17 @@ pub struct ToolExecutionError {
     pub is_retryable: bool,
 }
 
+impl ToolExecutionError {
+    /// Create a non-retryable error with no remediation hint.
+    pub fn simple(msg: impl Into<String>) -> Self {
+        Self {
+            message: msg.into(),
+            remediation_hint: None,
+            is_retryable: false,
+        }
+    }
+}
+
 impl std::fmt::Display for ToolExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)

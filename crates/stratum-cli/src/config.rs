@@ -155,6 +155,16 @@ impl StratumConfig {
         }
     }
 
+    /// Build a `DaemonConfig` from this config.
+    #[allow(dead_code)]
+    pub fn daemon_config(&self) -> crate::daemon::DaemonConfig {
+        crate::daemon::DaemonConfig {
+            pid_file: self.data_dir.join("daemon.pid"),
+            log_file: self.data_dir.join("daemon.log"),
+            ..crate::daemon::DaemonConfig::default()
+        }
+    }
+
     /// Return the path to the main SQLite database.
     pub fn db_path(&self) -> String {
         self.data_dir

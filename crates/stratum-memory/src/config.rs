@@ -19,6 +19,9 @@ pub struct MemoryStoreConfig {
     pub skills_dir: PathBuf,
     /// Half-life in hours for temporal decay scoring (default: 168 = 1 week).
     pub temporal_decay_half_life_hours: f64,
+    /// If true, global promotions skip the approval queue and write directly.
+    /// Useful for autonomous daemon mode where no human is approving promotions.
+    pub auto_approve_global: bool,
 }
 
 impl Default for MemoryStoreConfig {
@@ -30,6 +33,7 @@ impl Default for MemoryStoreConfig {
             search_strategy: SearchStrategy::Bm25,
             skills_dir: PathBuf::from(".stratum/skills"),
             temporal_decay_half_life_hours: 168.0,
+            auto_approve_global: false,
         }
     }
 }

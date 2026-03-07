@@ -1,6 +1,6 @@
 # CLI Reference
 
-Stratum provides 11 commands for managing agent runs, inspecting trajectory events, handling human-in-the-loop gates, and monitoring metrics.
+Stratum provides 13 commands for managing agent runs, inspecting trajectory events, handling human-in-the-loop gates, monitoring metrics, and running a persistent daemon.
 
 ## Global Options
 
@@ -269,3 +269,66 @@ stratum serve --port 8080
 ```
 
 Configure Prometheus to scrape `http://localhost:9090/metrics`.
+
+---
+
+### `stratum daemon`
+
+Start the persistent daemon that watches for tasks via rfbmq and runs them autonomously.
+
+```
+stratum daemon [--foreground]
+```
+
+**Options:**
+- `--foreground` — Run in foreground (default: `true`; the daemon does not background itself)
+
+**Requires:** API key
+
+**Behavior:**
+- Watches the rfbmq `pending/` directory via filesystem events (`notify` crate — FSEvents on macOS, inotify on Linux)
+- Dequeues tasks and spawns agent runs up to the concurrency limit (default: 4)
+- Uses a daemon-specific system prompt with 10 built-in tools (bash, file ops, memory, tool/skill creation)
+- Auto-approves global memory promotions (no human approval queue)
+- Writes a PID file to `<data_dir>/daemon.pid`
+- Handles `Ctrl+C` for graceful shutdown (waits up to 60s for active runs)
+- Periodically checks for new tasks every 5 seconds as a fallback
+
+**Example:**
+```bash
+# Start daemon in foreground
+stratum daemon
+
+# Stop with Ctrl+C
+```
+
+---
+
+### `stratum submit`
+
+Submit a task for the daemon to execute.
+
+```
+stratum submit <task> [--priority <priority>] [--tags <tags>]
+```
+
+**Arguments:**
+- `<task>` — The task goal (required)
+
+**Options:**
+- `--priority <priority>` — Priority level: `critical`, `high`, `normal`, `low` (default: `normal`)
+- `--tags <tags>` — Comma-separated tags for categorization
+
+**Example:**
+```bash
+# Submit a basic task
+stratum submit "Build a hello world web server"
+
+# Submit with priority and tags
+stratum submit "Fix the auth bug in login.rs" --priority high --tags bugfix,auth
+
+# Submit a low-priority task
+stratum submit "Add documentation to utils module" --priority low --tags docs
+```
+
+The task is enqueued into rfbmq and will be picked up by a running daemon.

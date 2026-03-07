@@ -4,10 +4,8 @@ use async_trait::async_trait;
 use stratum_adapters::{SqliteSessionManager, SqliteTrajectoryStore};
 use stratum_context::DefaultContextEngine;
 use stratum_core::turn::TurnOutcome;
-use stratum_core::{
-    ContextEngine, FrozenToolRegistry, LlmClient, SessionManager, ToolGateway, TrajectoryStore,
-};
-use stratum_tools::{DefaultToolGateway, InMemoryFrozenToolRegistry, SubprocessExecutor};
+use stratum_core::{ContextEngine, LlmClient, SessionManager, ToolGateway, TrajectoryStore};
+use stratum_tools::{CompositeExecutor, DefaultToolGateway, PersistentToolRegistry};
 use stratum_types::*;
 
 use crate::llm_adapter::LlmClientAdapter;
@@ -25,8 +23,8 @@ pub struct DefaultTurnExecutor {
     pub context_engine:
         Arc<DefaultContextEngine<SqliteSessionManager, SqliteTrajectoryStore, LlmClientAdapter>>,
     pub llm: Arc<LlmClientAdapter>,
-    pub tool_gateway: Arc<DefaultToolGateway<SqliteTrajectoryStore, SubprocessExecutor>>,
-    pub tool_registry: Arc<InMemoryFrozenToolRegistry>,
+    pub tool_gateway: Arc<DefaultToolGateway<SqliteTrajectoryStore, CompositeExecutor>>,
+    pub tool_registry: Arc<PersistentToolRegistry>,
     pub model: String,
 }
 
@@ -108,12 +106,8 @@ impl DefaultTurnExecutor {
         // 4. Build LLM messages from assembled context
         let messages = build_messages(&context);
 
-        // 5. Get tool definitions from registry for the LLM
-        let tool_defs: Vec<ToolDefinition> = run
-            .tool_manifest
-            .iter()
-            .filter_map(|name| self.tool_registry.get_tool(name).cloned())
-            .collect();
+        // 5. Get all registered tool definitions for the LLM
+        let tool_defs = self.tool_registry.get_manifest_owned();
         let tools_ref = if tool_defs.is_empty() {
             None
         } else {

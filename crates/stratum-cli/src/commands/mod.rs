@@ -1,3 +1,4 @@
+pub mod daemon;
 pub mod dashboard;
 pub mod decide;
 pub mod export;
@@ -8,6 +9,7 @@ pub mod resume;
 pub mod run;
 pub mod serve;
 pub mod status;
+pub mod submit;
 pub mod trajectory;
 
 use stratum_core::{SessionManager, TrajectoryStore};

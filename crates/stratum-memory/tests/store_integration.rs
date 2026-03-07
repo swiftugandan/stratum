@@ -279,6 +279,44 @@ async fn test_promotion_emits_event() {
     assert!(!events.is_empty());
 }
 
+// --- Auto-approve global promotion ---
+
+#[tokio::test]
+async fn test_auto_approve_global_writes_directly() {
+    let trajectory = Arc::new(MockTrajectoryStore::default());
+    let store = DefaultMemoryStore::in_memory_with_config(trajectory, |cfg| {
+        cfg.auto_approve_global = true;
+    })
+    .unwrap();
+
+    // Write to project tier first
+    store
+        .write(
+            MemoryTier::Project,
+            &make_entry("p1", MemoryTier::Project, "promote me directly"),
+        )
+        .await
+        .unwrap();
+
+    // Promote project → global (should skip queue and write directly)
+    store
+        .promote("p1", MemoryTier::Project, MemoryTier::Global)
+        .await
+        .unwrap();
+
+    // Should be readable in global tier immediately (no queue)
+    let entry = store
+        .read(MemoryTier::Global, "p1")
+        .await
+        .unwrap()
+        .expect("entry should exist in global tier");
+    assert_eq!(entry.content, "promote me directly");
+
+    // No pending promotions (skipped the queue)
+    let pending = store.pending_promotions().unwrap();
+    assert!(pending.is_empty());
+}
+
 // --- Invalid promotion errors ---
 
 #[tokio::test]

@@ -58,13 +58,22 @@ impl<T: TrajectoryStore> DefaultMemoryStore<T> {
 
     /// Create a memory store with in-memory SQLite databases (for testing).
     pub fn in_memory(trajectory: Arc<T>) -> Result<Self, MemoryError> {
+        Self::in_memory_with_config(trajectory, |_| {})
+    }
+
+    /// Create a memory store with in-memory SQLite databases and custom config overrides.
+    pub fn in_memory_with_config(
+        trajectory: Arc<T>,
+        config_fn: impl FnOnce(&mut MemoryStoreConfig),
+    ) -> Result<Self, MemoryError> {
         let dir = tempfile::tempdir().map_err(MemoryError::Io)?;
-        let config = MemoryStoreConfig {
+        let mut config = MemoryStoreConfig {
             project_memory_dir: dir.path().join("memory"),
             episodic_db_path: dir.path().join("episodic.db"),
             global_db_path: dir.path().join("global.db"),
             ..Default::default()
         };
+        config_fn(&mut config);
 
         let episodic_conn = Connection::open_in_memory()?;
         let global_conn = Connection::open_in_memory()?;
@@ -306,16 +315,21 @@ impl<T: TrajectoryStore + 'static> MemoryStore for DefaultMemoryStore<T> {
             ..entry
         };
 
-        // Global promotion goes through the queue
+        // Global promotion goes through the queue (unless auto_approve is set)
         if to == MemoryTier::Global {
-            let global_conn = self.global.connection().clone();
-            let entry_for_queue = promoted_entry.clone();
+            if self.config.auto_approve_global {
+                // In daemon/autonomous mode, write directly to global tier
+                self.write(to, &promoted_entry).await?;
+            } else {
+                let global_conn = self.global.connection().clone();
+                let entry_for_queue = promoted_entry.clone();
 
-            tokio::task::spawn_blocking(move || {
-                let t = GlobalTier::wrap(global_conn);
-                t.queue_promotion(&entry_for_queue)
-            })
-            .await??;
+                tokio::task::spawn_blocking(move || {
+                    let t = GlobalTier::wrap(global_conn);
+                    t.queue_promotion(&entry_for_queue)
+                })
+                .await??;
+            }
         } else {
             self.write(to, &promoted_entry).await?;
         }

@@ -11,12 +11,12 @@ Stratum uses hexagonal (ports-and-adapters) architecture to decouple every layer
 | 1 | **Session Manager** | Run lifecycle, checkpointing, state machine transitions |
 | 2 | **Context Engine** | 5-slot context assembly, budget checking, 3-stage compaction |
 | 3 | **Memory Hierarchy** | 4-tier memory (Working / Episodic / Project / Global) with FTS5 search |
-| 4 | **Tool Gateway** | Schema validation, trust enforcement, retry with backoff |
+| 4 | **Tool Gateway** | Schema validation, trust enforcement, retry with backoff, built-in + dynamic tools |
 | 5 | **Sub-Agent Orchestrator** | Delegate / Pipeline / Parallel / Janitor spawn patterns via rfbmq |
 | 6 | **HITL Controller** | 7 gate categories, policy engine, webhook notifications |
 | 7 | **Trajectory Store** | Full event capture, Prometheus metrics, JSONL/CSV/Replay export |
 
-**Cross-cutting:** LLM client adapters (Anthropic, OpenAI Chat, OpenAI Responses), constraint enforcement, artefact validation.
+**Cross-cutting:** LLM client adapters (Anthropic, OpenAI Chat, OpenAI Responses), constraint enforcement, artefact validation, persistent daemon mode.
 
 ## Quick Start
 
@@ -70,7 +70,21 @@ stratum trajectory <run_id>
 stratum export <run_id> --format jsonl > training.jsonl
 ```
 
-See the [CLI Reference](docs/cli-reference.md) for all 11 commands.
+### Daemon Mode
+
+Run Stratum as a persistent daemon that watches for tasks via rfbmq:
+
+```bash
+# Start the daemon (foreground)
+stratum daemon
+
+# Submit a task from another terminal
+stratum submit "Build a CLI calculator" --priority high --tags math,cli
+```
+
+The daemon watches the rfbmq `pending/` directory (via filesystem events), dequeues tasks, and runs them autonomously with up to 4 concurrent runs. It uses a dedicated system prompt with built-in tools for bash, file operations, memory, tool creation, and skill creation.
+
+See the [CLI Reference](docs/cli-reference.md) for all 13 commands.
 
 ## Architecture
 
@@ -108,7 +122,7 @@ For the full architecture, see the [System Architecture Document](docs/stratum-s
 | `stratum-core` | Pure port traits only — defines boundaries for all 7 strata + TurnExecutor |
 | `stratum-context` | Stratum 2: Context Engine |
 | `stratum-memory` | Stratum 3: Memory Hierarchy |
-| `stratum-tools` | Stratum 4: Tool Gateway |
+| `stratum-tools` | Stratum 4: Tool Gateway, built-in tools, persistent registry |
 | `stratum-orchestrator` | Stratum 5: Sub-Agent Orchestrator + rfbmq |
 | `stratum-adapters` | Concrete implementations (SQLite, LLM clients, HITL, Trajectory) |
 | `stratum-cli` | CLI binary |
@@ -117,13 +131,14 @@ For the full architecture, see the [System Architecture Document](docs/stratum-s
 ### Key Design Decisions
 
 - **EventType is a flat enum** — unit variants only; event data goes in `TrajectoryEvent::payload`
-- **FrozenToolRegistry** — builder allows mutation during init; frozen registry is immutable after (protects KV-cache economics)
+- **FrozenToolRegistry + PersistentToolRegistry** — FrozenToolRegistry is immutable after init; PersistentToolRegistry (SQLite-backed) allows dynamic tool creation between turns
 - **Two-prompt pattern** — Initialiser produces TASK.md, PROGRESS.md, DECISIONS.md; Worker executes against them
+- **Daemon mode** — Persistent process watches rfbmq queue, auto-runs tasks with built-in tools and autonomous memory
 - **All state transitions emit trajectory events** — full observability by default
 
 ## Documentation
 
-- [CLI Reference](docs/cli-reference.md) — All 11 commands with usage and examples
+- [CLI Reference](docs/cli-reference.md) — All 13 commands with usage and examples
 - [Configuration Guide](docs/configuration-guide.md) — Config file, env vars, defaults
 - [Trajectory Export Guide](docs/trajectory-export-guide.md) — Export formats and fine-tuning integration
 - [System Architecture Document](docs/stratum-sad-v3.0.md) — Full architecture

@@ -26,7 +26,7 @@ Stratum is a model-agnostic agent harness with 7 independently swappable strata 
 | `stratum-core` | **Pure port traits only** — no implementations. Defines boundaries for all 7 strata + TurnExecutor |
 | `stratum-context` | Stratum 2: Context Engine |
 | `stratum-memory` | Stratum 3: Memory Hierarchy |
-| `stratum-tools` | Stratum 4: Tool Gateway |
+| `stratum-tools` | Stratum 4: Tool Gateway, built-in tools, persistent registry, composite executor |
 | `stratum-orchestrator` | Stratum 5: Sub-Agent Orchestrator + rfbmq |
 | `stratum-adapters` | Concrete implementations (SQLite stores, LLM clients, prompts). Houses Strata 1, 6, 7 impls |
 | `stratum-cli` | CLI binary |
@@ -38,7 +38,10 @@ Stratum is a model-agnostic agent harness with 7 independently swappable strata 
 - **Implementations go in stratum-adapters** (for cross-cutting concerns like SQLite, LLM) or in the stratum-specific crate.
 - **EventType is a flat enum** (unit variants only). Event-specific data goes in `TrajectoryEvent::payload` as `serde_json::Value`.
 - **FrozenToolRegistry pattern**: `ToolRegistryBuilder` allows mutation during init; `FrozenToolRegistry` is immutable after. Protects KV-cache economics.
+- **PersistentToolRegistry**: SQLite-backed mutable registry for daemon mode; allows dynamic tool creation between turns.
+- **CompositeExecutor**: Routes tool calls to `BuiltinExecutor` (bash, file ops, memory, tool/skill creation) or `SubprocessExecutor` (external scripts).
 - **RunArtefacts**: Two-prompt pattern — Initialiser produces TASK.md, PROGRESS.md, DECISIONS.md; Worker executes.
+- **Daemon mode**: Persistent process watches rfbmq queue via `notify` (FSEvents/inotify), auto-runs tasks with built-in tools.
 - **All state transitions emit trajectory events.**
 
 ### The 7 Strata (port traits in stratum-core/src/ports.rs)
@@ -60,7 +63,13 @@ Cross-cutting: **LlmClient**, **ArtefactValidator**, **ConstraintEnforcer**
 - `crates/stratum-core/src/turn.rs` — TurnExecutor trait (orchestrates a single agent turn)
 - `crates/stratum-adapters/src/session.rs` — SqliteSessionManager (state machine with validated transitions)
 - `crates/stratum-adapters/src/trajectory.rs` — SqliteTrajectoryStore
-- `crates/stratum-adapters/src/prompt.rs` — Initialiser/Worker prompt templates
+- `crates/stratum-adapters/src/prompt.rs` — Initialiser/Worker/Daemon prompt templates
+- `crates/stratum-tools/src/builtin/` — Built-in tool implementations (bash, file ops, memory, tool/skill creation)
+- `crates/stratum-tools/src/persistent_registry.rs` — PersistentToolRegistry (SQLite-backed, dynamic tools)
+- `crates/stratum-tools/src/composite.rs` — CompositeExecutor (routes builtin vs subprocess)
+- `crates/stratum-cli/src/daemon.rs` — DaemonLoop (rfbmq watcher, concurrent task runner)
+- `crates/stratum-cli/src/commands/daemon.rs` — `stratum daemon` command
+- `crates/stratum-cli/src/commands/submit.rs` — `stratum submit` command
 - `crates/stratum-test-utils/src/mocks.rs` — All mock implementations
 
 ## Documentation
@@ -71,7 +80,7 @@ Cross-cutting: **LlmClient**, **ArtefactValidator**, **ConstraintEnforcer**
 
 ## Current State
 
-All 13 phases complete. Phases 1-12 delivered: workspace structure, domain types, all port traits, mocks, SqliteTrajectoryStore, InMemoryMetrics, SqliteSessionManager, two-prompt pattern, LLM client adapters, Context Engine, Memory Hierarchy, Tool Gateway, Sub-Agent Orchestrator, HITL Controller, CLI + Integration Wiring, Observability Dashboard, Testing & Hardening (377 tests, clippy + fmt clean). Phase 13 delivered: README.md, CLI reference, configuration guide, trajectory export guide, release build verified (v0.1.0).
+All 13 phases complete (v0.1.0). Post-v0.1.0 work adds: daemon mode (`stratum daemon` / `stratum submit`), built-in tools (bash, file ops, memory, tool/skill creation), PersistentToolRegistry (SQLite-backed dynamic tools), CompositeExecutor (builtin + subprocess routing), auto-approve global memory promotions for daemon mode, and daemon-specific system prompt.
 
 ## Ways of Working
 

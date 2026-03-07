@@ -79,6 +79,9 @@ The `data_dir` (default: `.stratum/`) stores all persistent state:
   skills/           # Skill definitions (Markdown with YAML frontmatter)
   queues/           # rfbmq task dispatch queues
   sandbox/          # Subprocess executor sandbox root
+  tools.db          # Persistent tool registry (agent-created tools)
+  daemon.pid        # Daemon PID file (when running)
+  daemon.log        # Daemon log file
 ```
 
 ## Commands Requiring an API Key
@@ -87,5 +90,6 @@ The following commands require a valid API key (via `STRATUM_API_KEY` or config)
 
 - `stratum run`
 - `stratum resume`
+- `stratum daemon`
 
-All other commands (status, trajectory, export, gates, decide, queue, metrics, dashboard, serve) are read-only and do not require an API key.
+All other commands (status, trajectory, export, gates, decide, queue, submit, metrics, dashboard, serve) are read-only or queue-only and do not require an API key.

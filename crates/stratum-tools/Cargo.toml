@@ -15,10 +15,12 @@ thiserror.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 rand.workspace = true
-tokio = { workspace = true, features = ["time", "process", "io-util"] }
+tokio = { workspace = true, features = ["time", "process", "io-util", "fs"] }
 jsonschema.workspace = true
+rusqlite.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
 stratum-test-utils.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

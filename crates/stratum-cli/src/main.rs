@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod config;
+mod daemon;
 mod llm_adapter;
 mod run_loop;
 mod turn_executor;
@@ -55,6 +56,16 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Serve { port } => {
             commands::serve::execute(*port, &config).await?;
+        }
+        Commands::Daemon { .. } => {
+            commands::daemon::execute(config).await?;
+        }
+        Commands::Submit {
+            task,
+            priority,
+            tags,
+        } => {
+            commands::submit::execute(task, priority, tags, &config).await?;
         }
     }
 

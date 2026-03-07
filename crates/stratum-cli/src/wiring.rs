@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use stratum_core::ToolRegistryBuilder;
-
 use stratum_adapters::{
     InMemoryMetrics, SqliteHitlController, SqliteSessionManager, SqliteTrajectoryStore,
     StdoutNotifier,
 };
 use stratum_context::DefaultContextEngine;
+use stratum_core::ToolRegistryBuilder;
 use stratum_memory::DefaultMemoryStore;
 use stratum_orchestrator::{DefaultOrchestrator, RfbmqDispatcher};
 use stratum_tools::{
-    DefaultToolGateway, InMemoryFrozenToolRegistry, InMemoryToolRegistryBuilder, SubprocessExecutor,
+    BuiltinExecutor, CompositeExecutor, DefaultToolGateway, PersistentToolRegistry,
+    SubprocessExecutor,
 };
 
 use crate::config::StratumConfig;
@@ -57,14 +57,13 @@ pub struct AppContext {
     pub llm: Arc<LlmClientAdapter>,
     pub context_engine:
         Arc<DefaultContextEngine<SqliteSessionManager, SqliteTrajectoryStore, LlmClientAdapter>>,
-    pub tool_registry: Arc<InMemoryFrozenToolRegistry>,
-    pub tool_gateway: Arc<DefaultToolGateway<SqliteTrajectoryStore, SubprocessExecutor>>,
+    pub tool_registry: Arc<PersistentToolRegistry>,
+    pub tool_gateway: Arc<DefaultToolGateway<SqliteTrajectoryStore, CompositeExecutor>>,
     #[allow(dead_code)]
     pub hitl: Arc<SqliteHitlController>,
     pub config: StratumConfig,
-    // Constructed but accessed only by future phases:
     #[allow(dead_code)]
-    memory: Arc<DefaultMemoryStore<SqliteTrajectoryStore>>,
+    pub memory: Arc<DefaultMemoryStore<SqliteTrajectoryStore>>,
     #[allow(dead_code)]
     orchestrator: Arc<DefaultOrchestrator<SqliteSessionManager, SqliteTrajectoryStore>>,
     #[allow(dead_code)]
@@ -74,6 +73,15 @@ pub struct AppContext {
 impl AppContext {
     /// Build the full application context from config.
     pub fn build(config: StratumConfig) -> anyhow::Result<Self> {
+        Self::build_inner(config, false)
+    }
+
+    /// Build the application context for daemon mode (auto-approves global memory promotions).
+    pub fn build_daemon(config: StratumConfig) -> anyhow::Result<Self> {
+        Self::build_inner(config, true)
+    }
+
+    fn build_inner(config: StratumConfig, auto_approve_global: bool) -> anyhow::Result<Self> {
         let core = CoreServices::build(&config)?;
 
         // LLM client
@@ -88,25 +96,36 @@ impl AppContext {
         ));
 
         // Memory store
+        let mut mem_config = config.memory_store_config();
+        mem_config.auto_approve_global = auto_approve_global;
         let memory = Arc::new(DefaultMemoryStore::new(
-            config.memory_store_config(),
+            mem_config,
             Arc::clone(&core.trajectory),
         )?);
 
-        // Tool registry (empty by default; tools populated per-run config)
-        let builder = InMemoryToolRegistryBuilder::default();
-        let tool_registry = Arc::new(builder.build()?);
+        // Persistent tool registry with built-in tools
+        let registry_db_path = config.data_dir.join("tools.db");
+        let registry_conn = Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(
+            &registry_db_path,
+        )?));
+        let tool_registry = Arc::new(PersistentToolRegistry::new(registry_conn)?);
 
-        // Subprocess executor
-        let executor = Arc::new(SubprocessExecutor::new(
-            config.subprocess_executor_config(),
-            HashMap::new(),
+        // Register built-in tool definitions
+        tool_registry.register_builtins(stratum_tools::builtin::all_builtin_definitions())?;
+
+        // Composite executor (builtin + subprocess)
+        let executor = Arc::new(CompositeExecutor::new(
+            BuiltinExecutor,
+            SubprocessExecutor::new(config.subprocess_executor_config(), HashMap::new()),
         ));
 
-        // Tool gateway
+        // Tool gateway (uses PersistentToolRegistry via the trait)
+        // Note: The gateway still needs an InMemoryFrozenToolRegistry for trait compatibility.
+        // We build one from the current persistent registry state.
+        let frozen_registry = build_frozen_from_persistent(&tool_registry)?;
         let tool_gateway = Arc::new(DefaultToolGateway::new(
             config.tool_gateway_config(),
-            Arc::clone(&tool_registry),
+            Arc::new(frozen_registry),
             Arc::clone(&core.trajectory),
             executor,
             config.trust_level,
@@ -137,6 +156,17 @@ impl AppContext {
             config,
         })
     }
+}
+
+/// Build an InMemoryFrozenToolRegistry from a PersistentToolRegistry's current state.
+fn build_frozen_from_persistent(
+    registry: &PersistentToolRegistry,
+) -> anyhow::Result<stratum_tools::InMemoryFrozenToolRegistry> {
+    let mut builder = stratum_tools::InMemoryToolRegistryBuilder::default();
+    for def in registry.get_manifest_owned() {
+        builder.register(def)?;
+    }
+    Ok(builder.build()?)
 }
 
 /// Lightweight context for read-only commands (no LLM client needed).

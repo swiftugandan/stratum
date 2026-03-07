@@ -1,15 +1,14 @@
 use stratum_adapters::prompt::initialiser_prompt;
 use stratum_core::turn::TurnOutcome;
-use stratum_core::{LlmClient, SessionManager, TurnExecutor};
+use stratum_core::{LlmClient, MemoryStore, SessionManager, TurnExecutor};
 use stratum_types::*;
 
 use crate::turn_executor::DefaultTurnExecutor;
 use crate::wiring::AppContext;
 
-/// Run a new agent task from scratch.
-pub async fn run_new(task: &str, ctx: &AppContext) -> anyhow::Result<()> {
-    // 1. Create a new run in Initialising state
-    let run = StratumRun {
+/// Create a new `StratumRun` from the current config.
+fn new_run(ctx: &AppContext) -> StratumRun {
+    StratumRun {
         id: uuid::Uuid::new_v4(),
         parent_run_id: None,
         model_ref: ctx.config.model.clone(),
@@ -21,9 +20,45 @@ pub async fn run_new(task: &str, ctx: &AppContext) -> anyhow::Result<()> {
         spawn_depth_limit: 2,
         state: RunState::Initialising,
         created_at: chrono::Utc::now(),
-    };
+    }
+}
 
-    let run = ctx.session.create_run(run).await?;
+/// Run a task that was dequeued from rfbmq. Uses daemon-mode system prompt.
+pub async fn run_from_queue(task: &str, ctx: &AppContext) -> anyhow::Result<()> {
+    // Use the daemon system anchor instead of the default one
+    let tool_names: Vec<String> = ctx
+        .tool_registry
+        .get_manifest_owned()
+        .iter()
+        .map(|d| d.name.clone())
+        .collect();
+    let system_anchor = stratum_adapters::prompt::daemon_system_anchor(&tool_names);
+
+    let run = ctx.session.create_run(new_run(ctx)).await?;
+    let run_id = run.id;
+    tracing::info!(run_id = %run_id, "created queue run");
+
+    // Initialize context engine with daemon prompt and task as the manifest
+    ctx.context_engine
+        .init_run(run_id, system_anchor, task.to_string(), String::new())
+        .await;
+    ctx.context_engine
+        .set_task_manifest(run_id, task.to_string())
+        .await;
+
+    // Transition directly to Running (skip initialiser prompt for queue tasks)
+    ctx.session
+        .transition_state(run_id, RunState::Running)
+        .await?;
+
+    let executor = DefaultTurnExecutor::from_context(ctx);
+    worker_loop(run_id, &executor, ctx).await
+}
+
+/// Run a new agent task from scratch.
+pub async fn run_new(task: &str, ctx: &AppContext) -> anyhow::Result<()> {
+    // 1. Create a new run in Initialising state
+    let run = ctx.session.create_run(new_run(ctx)).await?;
     let run_id = run.id;
     tracing::info!(run_id = %run_id, "created new run");
     eprintln!("Run created: {run_id}");
@@ -145,6 +180,20 @@ async fn worker_loop(
                     count = results.len(),
                     "tool calls executed"
                 );
+
+                // Process _builtin_action markers from stateful tools,
+                // replacing marker output with real results where applicable.
+                let mut results = results;
+                for r in &mut results {
+                    if r.status == ToolResultStatus::Success
+                        && r.output.get("_builtin_action").is_some()
+                    {
+                        if let Some(replacement) = process_builtin_action(&r.output, ctx).await {
+                            r.output = replacement;
+                        }
+                    }
+                }
+
                 // Feed results into context for next turn
                 for r in &results {
                     let text = format!(
@@ -192,6 +241,156 @@ async fn worker_loop(
             }
         }
     }
+}
+
+/// Process a `_builtin_action` marker from a stateful built-in tool.
+///
+/// These markers are produced by `BuiltinExecutor` for tools that need access to
+/// shared state (PersistentToolRegistry, MemoryStore, skill files). The wiring
+/// layer intercepts the markers here and performs the actual mutations.
+/// Returns `Some(replacement_output)` if the action produces a result the agent should see
+/// (e.g., memory_search results). Returns `None` for actions where the marker itself is sufficient.
+async fn process_builtin_action(
+    val: &serde_json::Value,
+    ctx: &AppContext,
+) -> Option<serde_json::Value> {
+    let action = match val.get("_builtin_action").and_then(|v| v.as_str()) {
+        Some(a) => a,
+        None => return None,
+    };
+
+    match action {
+        "create_tool" => {
+            let name = val["name"].as_str().unwrap_or_default();
+            let description = val["description"].as_str().unwrap_or_default();
+            let schema = val
+                .get("schema")
+                .cloned()
+                .unwrap_or(serde_json::json!({"type": "object"}));
+            let script_path = val["script_path"].as_str().map(String::from);
+            let param_passing = val["param_passing"].as_str().unwrap_or("stdin");
+
+            let def = ToolDefinition {
+                name: name.to_string(),
+                description: description.to_string(),
+                schema,
+                trust_level_required: TrustLevel::Supervised,
+            };
+
+            match ctx
+                .tool_registry
+                .register_dynamic(def, script_path, param_passing)
+            {
+                Ok(()) => {
+                    tracing::info!(tool = name, "registered dynamic tool");
+                    eprintln!("Tool created: {name}");
+                }
+                Err(e) => {
+                    tracing::error!(tool = name, error = %e, "failed to register dynamic tool");
+                }
+            }
+            None
+        }
+        "create_skill" => {
+            let params = stratum_tools::builtin::create_skill::CreateSkillParams {
+                name: val["name"].as_str().unwrap_or_default().to_string(),
+                description: val["description"].as_str().unwrap_or_default().to_string(),
+                triggers: val
+                    .get("triggers")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                content: val["content"].as_str().unwrap_or_default().to_string(),
+            };
+
+            let skills_dir = ctx.config.data_dir.join("skills");
+            match stratum_tools::builtin::create_skill::write_skill_file(&skills_dir, &params).await
+            {
+                Ok(path) => {
+                    tracing::info!(skill = params.name, path = %path.display(), "created skill file");
+                    eprintln!("Skill created: {}", params.name);
+                }
+                Err(e) => {
+                    tracing::error!(skill = params.name, error = %e, "failed to create skill");
+                }
+            }
+            None
+        }
+        "memory_write" => {
+            let tier = parse_memory_tier(val["tier"].as_str().unwrap_or("working"));
+            let id = val["id"].as_str().unwrap_or_default();
+            let content = val["content"].as_str().unwrap_or_default();
+
+            let entry = MemoryEntry {
+                id: id.to_string(),
+                tier,
+                content: content.to_string(),
+                metadata: serde_json::json!({}),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+
+            match ctx.memory.write(tier, &entry).await {
+                Ok(()) => tracing::info!(tier = ?tier, id, "memory written"),
+                Err(e) => tracing::error!(tier = ?tier, id, error = %e, "memory write failed"),
+            }
+            None
+        }
+        "memory_search" => {
+            let tier = parse_memory_tier(val["tier"].as_str().unwrap_or("working"));
+            let query = val["query"].as_str().unwrap_or_default();
+            let limit = val["limit"].as_u64().unwrap_or(10) as usize;
+
+            match ctx.memory.search(tier, query, limit).await {
+                Ok(results) => {
+                    tracing::info!(tier = ?tier, query, count = results.len(), "memory search done");
+                    let entries: Vec<_> = results
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "id": r.entry.id,
+                                "content": r.entry.content,
+                                "score": r.relevance_score,
+                            })
+                        })
+                        .collect();
+                    Some(serde_json::json!({
+                        "results": entries,
+                        "count": results.len(),
+                    }))
+                }
+                Err(e) => {
+                    tracing::error!(tier = ?tier, query, error = %e, "memory search failed");
+                    None
+                }
+            }
+        }
+        "memory_promote" => {
+            let entry_id = val["entry_id"].as_str().unwrap_or_default();
+            let from = parse_memory_tier(val["from_tier"].as_str().unwrap_or("working"));
+            let to = parse_memory_tier(val["to_tier"].as_str().unwrap_or("episodic"));
+
+            match ctx.memory.promote(entry_id, from, to).await {
+                Ok(()) => tracing::info!(entry_id, from = ?from, to = ?to, "memory promoted"),
+                Err(e) => {
+                    tracing::error!(entry_id, error = %e, "memory promote failed");
+                }
+            }
+            None
+        }
+        _ => {
+            tracing::warn!(action, "unknown _builtin_action");
+            None
+        }
+    }
+}
+
+fn parse_memory_tier(s: &str) -> MemoryTier {
+    stratum_tools::builtin::memory::parse_tier(s).unwrap_or(MemoryTier::Working)
 }
 
 /// Parse `RunArtefacts` from LLM initialiser output.
@@ -275,5 +474,14 @@ cargo init
         let content = "No sections here.";
         let artefacts = parse_artefacts(content).unwrap();
         assert!(artefacts.validate().is_err());
+    }
+
+    #[test]
+    fn parse_memory_tier_all_variants() {
+        assert_eq!(parse_memory_tier("working"), MemoryTier::Working);
+        assert_eq!(parse_memory_tier("episodic"), MemoryTier::Episodic);
+        assert_eq!(parse_memory_tier("project"), MemoryTier::Project);
+        assert_eq!(parse_memory_tier("global"), MemoryTier::Global);
+        assert_eq!(parse_memory_tier("unknown"), MemoryTier::Working); // default
     }
 }

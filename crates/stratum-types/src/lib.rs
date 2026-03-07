@@ -363,6 +363,14 @@ pub enum EventType {
     GateDecisionReceived,
     RunPaused,
     RunRedirected,
+
+    // Daemon
+    DaemonStarted,
+    DaemonStopped,
+    TaskDequeued,
+    TaskCompleted,
+    ToolCreated,
+    SkillCreated,
 }
 
 // ---------------------------------------------------------------------------
