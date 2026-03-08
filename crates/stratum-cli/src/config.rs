@@ -1,8 +1,24 @@
-//! Simplified config: Anthropic-only, daemon-only.
+//! Config: multi-provider LLM support, daemon mode.
 
 use std::path::PathBuf;
 
 use serde::Deserialize;
+
+/// LLM provider. Determines API format and default base URL.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProvider {
+    Anthropic,
+    Groq,
+    /// Any OpenAI-compatible endpoint. Requires `base_url` to be set.
+    Openai,
+}
+
+impl Default for LlmProvider {
+    fn default() -> Self {
+        Self::Anthropic
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -10,6 +26,9 @@ pub struct StratumConfig {
     pub api_key: String,
     pub model: String,
     pub max_tokens: u32,
+    pub provider: LlmProvider,
+    /// Override the default base URL for the chosen provider.
+    pub base_url: Option<String>,
     pub data_dir: PathBuf,
     pub max_concurrent_runs: usize,
 }
@@ -20,6 +39,8 @@ impl Default for StratumConfig {
             api_key: String::new(),
             model: "claude-sonnet-4-20250514".to_string(),
             max_tokens: 4096,
+            provider: LlmProvider::default(),
+            base_url: None,
             data_dir: PathBuf::from(".stratum"),
             max_concurrent_runs: 4,
         }
@@ -62,6 +83,16 @@ impl StratumConfig {
         }
         if let Ok(model) = std::env::var("STRATUM_MODEL") {
             self.model = model;
+        }
+        if let Ok(provider) = std::env::var("STRATUM_PROVIDER") {
+            self.provider = match provider.to_lowercase().as_str() {
+                "groq" => LlmProvider::Groq,
+                "openai" => LlmProvider::Openai,
+                _ => LlmProvider::Anthropic,
+            };
+        }
+        if let Ok(url) = std::env::var("STRATUM_BASE_URL") {
+            self.base_url = Some(url);
         }
         if let Ok(dir) = std::env::var("STRATUM_DATA_DIR") {
             self.data_dir = PathBuf::from(dir);
@@ -107,6 +138,8 @@ mod tests {
         assert_eq!(config.model, "claude-sonnet-4-20250514");
         assert_eq!(config.max_tokens, 4096);
         assert!(config.api_key.is_empty());
+        assert_eq!(config.provider, LlmProvider::Anthropic);
+        assert!(config.base_url.is_none());
     }
 
     #[test]
